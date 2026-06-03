@@ -1,0 +1,498 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>多智能体协同健康饮食规划系统</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+  <div class="app-container">
+    
+    <!-- 侧边栏：多智能体拓扑与导航 -->
+    <aside class="sidebar">
+      <div class="logo-section">
+        <div class="logo-icon">🥗</div>
+        <div class="logo-text">
+          <h1>健康饮食规划系统</h1>
+          <span>Multi-Agent System</span>
+        </div>
+      </div>
+      
+      <div class="agent-list">
+        <!-- 客户经理 -->
+        <div class="agent-card active" data-agent="client" id="agent-client">
+          <div class="agent-avatar">👤</div>
+          <div class="agent-info">
+            <div class="agent-name">客户经理 <span class="agent-status-dot"></span></div>
+            <div class="agent-role">收集用户画像与健康诉求</div>
+          </div>
+        </div>
+        
+        <!-- 饮食助理 -->
+        <div class="agent-card" data-agent="diet" id="agent-diet">
+          <div class="agent-avatar">🍏</div>
+          <div class="agent-info">
+            <div class="agent-name">饮食助理 <span class="agent-status-dot"></span></div>
+            <div class="agent-role">智能热量计算与方案定制</div>
+          </div>
+        </div>
+        
+        <!-- 食材助理 -->
+        <div class="agent-card" data-agent="ingredient" id="agent-ingredient">
+          <div class="agent-avatar">🛒</div>
+          <div class="agent-info">
+            <div class="agent-name">食材助理 <span class="agent-status-dot"></span></div>
+            <div class="agent-role">食材用量清单与存储建议</div>
+          </div>
+        </div>
+        
+        <!-- 评估助理 -->
+        <div class="agent-card" data-agent="eval" id="agent-eval">
+          <div class="agent-avatar">📊</div>
+          <div class="agent-info">
+            <div class="agent-name">评估助理 <span class="agent-status-dot"></span></div>
+            <div class="agent-role">成本/地域/季节多维评估</div>
+          </div>
+        </div>
+        
+        <!-- 营销助理 -->
+        <div class="agent-card" data-agent="market" id="agent-market">
+          <div class="agent-avatar">📣</div>
+          <div class="agent-info">
+            <div class="agent-name">营销助理 <span class="agent-status-dot"></span></div>
+            <div class="agent-role">健康食谱推广与社交裂变</div>
+          </div>
+        </div>
+      </div>
+    </aside>
+    
+    <!-- 主工作区 -->
+    <main class="workspace">
+      <!-- 进度指示器 -->
+      <div class="progress-header">
+        <div class="steps-indicator">
+          当前环节：<span id="current-step-name" class="active-step-num">客户经理 - 问卷收集</span>
+        </div>
+        <div class="progress-bar-container">
+          <div class="progress-bar-fill" id="progressBar"></div>
+        </div>
+      </div>
+      
+      <!-- 步骤 1：客户经理问卷收集 -->
+      <section class="step-view active" id="step-1">
+        <div class="glass-panel">
+          <div class="panel-header">
+            <h2 class="panel-title">👤 客户经理：基础健康问卷</h2>
+            <span style="font-size: 0.8rem; color: var(--text-muted);">问卷形式收集用户基础信息，获取用户画像</span>
+          </div>
+          
+          <form id="healthForm" onsubmit="event.preventDefault();">
+            <div class="questionnaire-grid">
+              
+              <!-- 基础信息 -->
+              <div class="form-group">
+                <label for="gender">性别</label>
+                <select id="gender" required>
+                  <option value="male">男</option>
+                  <option value="female" selected>女</option>
+                </select>
+              </div>
+              
+              <div class="form-group">
+                <label for="age">年龄</label>
+                <div class="range-slider-group">
+                  <input type="range" id="age" min="18" max="80" value="28" oninput="document.getElementById('ageVal').innerText = this.value">
+                  <span class="range-val"><span id="ageVal">28</span> 岁</span>
+                </div>
+              </div>
+              
+              <div class="form-group">
+                <label for="height">身高 (cm)</label>
+                <div class="range-slider-group">
+                  <input type="range" id="height" min="140" max="210" value="165" oninput="document.getElementById('heightVal').innerText = this.value">
+                  <span class="range-val"><span id="heightVal">165</span> cm</span>
+                </div>
+              </div>
+              
+              <div class="form-group">
+                <label for="weight">体重 (kg)</label>
+                <div class="range-slider-group">
+                  <input type="range" id="weight" min="40" max="130" value="56" oninput="document.getElementById('weightVal').innerText = this.value">
+                  <span class="range-val"><span id="weightVal">56</span> kg</span>
+                </div>
+              </div>
+              
+              <!-- 核心诉求 -->
+              <div class="form-group">
+                <label for="goal">健康诉求目标</label>
+                <select id="goal">
+                  <option value="lose-fat" selected>健康减脂（少油少糖低热量）</option>
+                  <option value="gain-muscle">增肌塑形（高蛋白高热量）</option>
+                  <option value="balanced">日常温和膳食（均衡营养）</option>
+                  <option value="low-gi">降糖控血糖（极低升糖指数）</option>
+                </select>
+              </div>
+              
+              <!-- 日常活动量 -->
+              <div class="form-group">
+                <label for="activity">活动量水平</label>
+                <select id="activity">
+                  <option value="sedentary">久坐不动（办公室白领）</option>
+                  <option value="light" selected>轻度活动（每周散步几次）</option>
+                  <option value="moderate">中度运动（每周打球/健身3-4次）</option>
+                  <option value="heavy">高强度活动（重体力劳动/专业运动员）</option>
+                </select>
+              </div>
+              
+              <!-- 饮食习惯与偏好 -->
+              <div class="form-group">
+                <label>饮食偏好习惯</label>
+                <div class="checkbox-pill-grid">
+                  <label>
+                    <input type="radio" name="dietHabit" value="balanced" checked>
+                    <span class="pill-button">均衡营养杂食</span>
+                  </label>
+                  <label>
+                    <input type="radio" name="dietHabit" value="low-carb">
+                    <span class="pill-button">低碳水化合物</span>
+                  </label>
+                  <label>
+                    <input type="radio" name="dietHabit" value="mediterranean">
+                    <span class="pill-button">地中海膳食</span>
+                  </label>
+                  <label>
+                    <input type="radio" name="dietHabit" value="vegan">
+                    <span class="pill-button">纯素食/轻食</span>
+                  </label>
+                </div>
+              </div>
+              
+              <!-- 地域风味偏好 -->
+              <div class="form-group">
+                <label for="region">地域饮食风格</label>
+                <select id="region">
+                  <option value="south" selected>南方江浙沪粤（清淡偏甜、温润养生）</option>
+                  <option value="north">北方鲁豫陕甘（偏重咸鲜、杂粮丰富）</option>
+                  <option value="sichuan">川湘麻辣风味（开胃祛湿、重油盐辣）</option>
+                  <option value="western">西式简餐轻食（少油水煮、高膳食纤维）</option>
+                </select>
+              </div>
+              
+              <!-- 饮食禁忌与过敏源 -->
+              <div class="form-group full-width">
+                <label>排除食材（过敏/禁忌）</label>
+                <div class="checkbox-pill-grid">
+                  <label>
+                    <input type="checkbox" name="allergies" value="seafood">
+                    <span class="pill-button">海鲜/贝类</span>
+                  </label>
+                  <label>
+                    <input type="checkbox" name="allergies" value="dairy">
+                    <span class="pill-button">乳制品/乳糖</span>
+                  </label>
+                  <label>
+                    <input type="checkbox" name="allergies" value="nuts">
+                    <span class="pill-button">坚果/花生</span>
+                  </label>
+                  <label>
+                    <input type="checkbox" name="allergies" value="gluten">
+                    <span class="pill-button">麸质/小麦</span>
+                  </label>
+                  <label>
+                    <input type="checkbox" name="allergies" value="beef-pork">
+                    <span class="pill-button">红肉（牛肉/猪肉）</span>
+                  </label>
+                </div>
+              </div>
+              
+            </div>
+            
+            <button type="button" class="action-btn" id="submitFormBtn">
+              <span>生成用户画像并流转</span> ➔
+            </button>
+          </form>
+        </div>
+      </section>
+      
+      <!-- 动态模拟智能体分析中状态 -->
+      <section class="step-view" id="step-loading">
+        <div class="glass-panel">
+          <div class="processing-overlay">
+            <div class="spinner"></div>
+            <div class="processing-text" id="processingText">
+              正在处理数据...
+            </div>
+          </div>
+        </div>
+      </section>
+      
+      <!-- 步骤 2：饮食助理规划 -->
+      <section class="step-view" id="step-2">
+        <div class="glass-panel">
+          <div class="panel-header">
+            <h2 class="panel-title">🍏 饮食助理：多套膳食规划生成</h2>
+            <span style="font-size: 0.8rem; color: var(--text-muted);">识别饮食偏好，生成饮食规划，提供多个方案</span>
+          </div>
+          
+          <div class="plans-wrapper">
+            <!-- 方案快捷选择标签 -->
+            <div class="plans-selector-tabs" id="plansSelectorTabs">
+              <!-- 动态生成方案 Tab -->
+            </div>
+            
+            <!-- 方案展示区 -->
+            <div class="plan-content-grid">
+              
+              <!-- 左侧：一日三餐明细 -->
+              <div class="meals-list" id="mealsListContainer">
+                <!-- 动态渲染一日三餐卡片 -->
+              </div>
+              
+              <!-- 右侧：热量与宏量营养配比 -->
+              <div class="nutrition-card">
+                <h3 style="font-size: 0.95rem; font-weight:600; width: 100%;">每日营养结构</h3>
+                
+                <div class="macro-chart-container">
+                  <!-- SVG 饼图 -->
+                  <svg viewBox="0 0 100 100" width="140" height="140" id="macroPieChart">
+                    <circle cx="50" cy="50" r="40" fill="transparent" stroke="#1f2937" stroke-width="12"></circle>
+                    <!-- 动态塞入扇形环轨 -->
+                  </svg>
+                  <div class="macro-cals-center">
+                    <div class="num" id="totalKcalVal">1500</div>
+                    <div class="lbl">千卡</div>
+                  </div>
+                </div>
+                
+                <div class="macro-legend" id="macroLegend">
+                  <!-- 动态渲染三大营养素数据 -->
+                </div>
+              </div>
+              
+            </div>
+          </div>
+          
+          <div class="navigation-bar">
+            <button class="nav-btn prev-step-btn" data-prev="1">◀ 上一步</button>
+            <button class="nav-btn next-step-btn" data-next="3">下一步：食材清单规划 ➔</button>
+          </div>
+        </div>
+      </section>
+      
+      <!-- 步骤 3：食材助理清单 -->
+      <section class="step-view" id="step-3">
+        <div class="glass-panel">
+          <div class="panel-header">
+            <h2 class="panel-title">🛒 食材助理：食材采购清单规划</h2>
+            <span style="font-size: 0.8rem; color: var(--text-muted);">规划食材清单，分类汇总每个方案所需的采购明细</span>
+          </div>
+          
+          <div style="margin-bottom: 1rem; font-size: 0.9rem; color: var(--text-secondary);" id="ingredientTipText">
+            以下是食材助理为您整理的采购食材明细，支持点击勾选已购买物品：
+          </div>
+          
+          <div class="ingredients-accordion" id="ingredientsAccordion">
+            <!-- 动态生成食材分类手风琴 -->
+          </div>
+          
+          <div class="navigation-bar">
+            <button class="nav-btn prev-step-btn" data-prev="2">◀ 上一步</button>
+            <button class="nav-btn next-step-btn" data-next="4">下一步：方案多维评估 ➔</button>
+          </div>
+        </div>
+      </section>
+      
+      <!-- 步骤 4：评估助理评估 -->
+      <section class="step-view" id="step-4">
+        <div class="glass-panel">
+          <div class="panel-header">
+            <h2 class="panel-title">📊 评估助理：方案量化推荐</h2>
+            <span style="font-size: 0.8rem; color: var(--text-muted);">对方案成本、季节、地域匹配度进行评估，选定最终推荐方案</span>
+          </div>
+          
+          <div class="evaluation-layout">
+            <!-- 左侧：可视化权重滑块 -->
+            <div class="weight-sliders-card">
+              <h3 style="font-size: 1rem; font-weight: 600; margin-bottom: 0.5rem; color: var(--color-eval);">⚙️ 评估权重调节器</h3>
+              <p style="font-size: 0.8rem; color: var(--text-secondary); margin-bottom: 0.5rem;">
+                拖动滑块调整评估指标的重要性，系统会实时重新打分并自动推荐最佳食谱方案：
+              </p>
+              
+              <div class="weight-slider-item">
+                <div class="weight-slider-header">
+                  <span class="label">💰 经济实惠（成本控制）</span>
+                  <span class="pct" id="weightCostText">33%</span>
+                </div>
+                <input type="range" id="weightCost" min="0" max="100" value="33" class="weight-slider">
+              </div>
+              
+              <div class="weight-slider-item">
+                <div class="weight-slider-header">
+                  <span class="label">☀️ 季节适宜（夏季时令食材）</span>
+                  <span class="pct" id="weightSeasonText">33%</span>
+                </div>
+                <input type="range" id="weightSeason" min="0" max="100" value="33" class="weight-slider">
+              </div>
+              
+              <div class="weight-slider-item">
+                <div class="weight-slider-header">
+                  <span class="label">🌾 地域适宜（风味配比）</span>
+                  <span class="pct" id="weightRegionText">34%</span>
+                </div>
+                <input type="range" id="weightRegion" min="0" max="100" value="34" class="weight-slider">
+              </div>
+            </div>
+            
+            <!-- 右侧：方案评分对比与胜出推荐 -->
+            <div class="evaluation-results-card">
+              <h3 style="font-size: 1rem; font-weight: 600; margin-bottom: 0.5rem;">🏆 评分看板与推荐</h3>
+              
+              <div class="scores-comparison" id="scoresComparisonContainer">
+                <!-- 动态渲染方案评分条形图 -->
+              </div>
+              
+              <div class="winner-banner" id="winnerBannerContainer">
+                <!-- 动态渲染推荐胜出卡片 -->
+              </div>
+            </div>
+          </div>
+          
+          <div class="navigation-bar">
+            <button class="nav-btn prev-step-btn" data-prev="3">◀ 上一步</button>
+            <button class="nav-btn next-step-btn" data-next="5" id="toMarketBtn">下一步：智能营销文案 ➔</button>
+          </div>
+        </div>
+      </section>
+      
+      <!-- 步骤 5：营销助理推广 -->
+      <section class="step-view" id="step-5">
+        <div class="glass-panel">
+          <div class="panel-header">
+            <h2 class="panel-title">📣 营销助理：社交宣传文案生成</h2>
+            <span style="font-size: 0.8rem; color: var(--text-muted);">根据方案生成内容，用于各大平台软文推广或视频脚本分享</span>
+          </div>
+          
+          <div class="marketing-tabs-container">
+            <!-- 平台切换Tab -->
+            <div class="marketing-tabs">
+              <button class="marketing-tab-btn active" data-platform="xhs">📕 小红书种草文案</button>
+              <button class="marketing-tab-btn" data-platform="video">🎬 抖音短视频脚本</button>
+              <button class="marketing-tab-btn" data-platform="gzh">📰 微信公众号文章</button>
+            </div>
+            
+            <!-- 小红书文案 -->
+            <div class="marketing-panel active" id="market-xhs">
+              <div class="copy-box" id="copyBoxXhs">加载中...</div>
+              <button class="copy-btn" data-target="copyBoxXhs">
+                <span class="btn-icon">📋</span> <span class="btn-lbl">复制小红书文案</span>
+              </button>
+            </div>
+            
+            <!-- 抖音脚本 -->
+            <div class="marketing-panel" id="market-video">
+              <div class="copy-box" id="copyBoxVideo">加载中...</div>
+              <button class="copy-btn" data-target="copyBoxVideo">
+                <span class="btn-icon">📋</span> <span class="btn-lbl">复制抖音脚本</span>
+              </button>
+            </div>
+            
+            <!-- 微信文章 -->
+            <div class="marketing-panel" id="market-gzh">
+              <div class="copy-box" id="copyBoxGzh">加载中...</div>
+              <button class="copy-btn" data-target="copyBoxGzh">
+                <span class="btn-icon">📋</span> <span class="btn-lbl">复制公众号文章</span>
+              </button>
+            </div>
+          </div>
+
+          <!-- 新增：自动发布模块 -->
+          <div class="publish-section glass-panel" style="margin-top: 1.5rem; border-color: var(--color-market); padding: 1.5rem;">
+            <h3 style="font-size: 1rem; font-weight: 600; margin-bottom: 0.75rem; color: var(--color-market); display: flex; align-items: center; gap: 0.5rem;">🚀 自动发布到社交平台 (真实发布助手)</h3>
+            <p style="font-size: 0.8rem; color: var(--text-secondary); margin-bottom: 1rem; line-height: 1.5;">
+              本项目已开发完毕本地发布机器人！您可以先点击生成推广视频（将网页卡片实时绘制录制），然后下载数据发布包并开启发布机器人。
+            </p>
+            
+            <div style="display: flex; gap: 1rem; flex-wrap: wrap; margin-bottom: 1rem; align-items: center;">
+              <!-- 视频生成进度 -->
+              <button class="nav-btn" type="button" style="background: linear-gradient(135deg, var(--color-diet), #047857);" id="generateVideoBtn">🎬 1. 生成并录制宣传视频</button>
+              <div id="videoProgressContainer" style="display: none; flex: 1; min-width: 200px; align-items: center; gap: 0.75rem; background: rgba(0,0,0,0.2); padding: 0.5rem; border-radius: 8px;">
+                <div class="progress-bar-container" style="margin-left: 0; flex: 1; height: 8px;">
+                  <div class="progress-bar-fill" id="videoProgressBar" style="width: 0%; background: var(--color-diet);"></div>
+                </div>
+                <span style="font-size: 0.8rem; font-weight: 600;" id="videoProgressText">0%</span>
+              </div>
+            </div>
+
+            <div style="display: flex; gap: 1rem; flex-wrap: wrap;">
+              <button class="nav-btn" type="button" style="background: rgba(255,255,255,0.05); border-color: rgba(255,255,255,0.1);" id="downloadPublishPackBtn" disabled>📦 2. 下载发布配置包 (JSON)</button>
+              <button class="nav-btn" type="button" style="background: linear-gradient(135deg, var(--color-market), #be185d);" id="openPublishDialogBtn" disabled>🚀 3. 一键托管发布机器人</button>
+            </div>
+          </div>
+          
+          <div class="navigation-bar">
+            <button class="nav-btn prev-step-btn" data-prev="4">◀ 上一步</button>
+            <button class="nav-btn" style="background: linear-gradient(135deg, #10B981, #047857);" id="restartBtn">↩ 重新定制</button>
+          </div>
+        </div>
+      </section>
+      
+    </main>
+    
+    <!-- 底部：实时智能体协同日志 -->
+    <footer class="console-panel">
+      <div class="console-header">
+        <div class="console-title">
+          <span class="console-status"></span>
+          <span>智能体协同控制台日志 (Real-time Agent Console Logs)</span>
+        </div>
+        <div style="font-size: 0.7rem; color: var(--text-muted);">状态：协同运行中</div>
+      </div>
+      <div class="console-logs" id="consoleLogs">
+        <!-- 实时协同日志动态插入 -->
+      </div>
+    </footer>
+    
+  </div>
+
+  <!-- 离屏短视频 Canvas 绘制组件 -->
+  <canvas id="videoCanvas" width="600" height="400" style="display: none;"></canvas>
+
+  <!-- 自动化发布机器人指引弹窗 -->
+  <dialog id="publishDialog" class="glass-panel" style="margin: auto; width: 90%; max-width: 550px; border-color: var(--color-market); color: var(--text-primary); outline: none;">
+    <div class="panel-header" style="margin-bottom: 1rem; display: flex; justify-content: space-between; align-items: center;">
+      <h3 class="panel-title" style="color: var(--color-market); margin-bottom: 0;">🚀 自动化发布机器人运行指南</h3>
+      <button type="button" onclick="document.getElementById('publishDialog').close()" style="background: transparent; border: none; color: var(--text-secondary); cursor: pointer; font-size: 1.25rem;">✕</button>
+    </div>
+    
+    <div style="font-size: 0.85rem; line-height: 1.6; display: flex; flex-direction: column; gap: 1rem;">
+      <p>
+        由于各大开放平台对个人自动发布有限制，我们为您编写了一个基于 <b>Playwright</b> 的本地自动化发布机器人。
+      </p>
+      
+      <div style="background: rgba(0,0,0,0.4); padding: 0.75rem 1rem; border-radius: 8px; font-family: monospace; border: 1px solid rgba(255,255,255,0.05); white-space: pre-line;">
+        <span style="color: var(--color-diet);"># 1. 打开您的终端并安装 Playwright 依赖</span>
+        pip install playwright
+        playwright install
+
+        <span style="color: var(--color-diet);"># 2. 将刚下载的 publish_data.json 和 promo_video.webm 移入项目目录</span>
+
+        <span style="color: var(--color-diet);"># 3. 运行自动化脚本（xhs 小红书，dy 抖音）</span>
+        python publisher_bot.py -p xhs
+        <span style="color: var(--text-muted); font-size: 0.72rem;">或抖音版：python publisher_bot.py -p dy</span>
+      </div>
+
+      <p style="color: var(--text-secondary);">
+        <b>工作原理</b>：脚本会以有头模式自动加载 Chromium 浏览器并跳转到发布页面，引导您进行<b>扫码登录</b>。一旦检测到登录，机器人将自动上传生成的短视频，并自动填写生成好的食谱软文和标签，您只需最终确认发布即可！
+      </p>
+
+      <div style="display:flex; justify-content: flex-end; gap: 1rem; margin-top: 0.5rem;">
+        <button class="nav-btn" type="button" onclick="document.getElementById('publishDialog').close()" style="padding: 0.5rem 1.2rem; font-size: 0.8rem;">好的，我知道了</button>
+      </div>
+    </div>
+  </dialog>
+
+  <script src="app.js"></script>
+</body>
+</html>

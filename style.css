@@ -1,0 +1,1158 @@
+/* 
+  多智能体健康饮食规划系统 - style.css
+  设计风格：现代深色质感仪表盘、毛玻璃效果、健康活力配色、微交互动效
+*/
+
+@import url('https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&family=Noto+Sans+SC:wght@300;400;500;700&display=swap');
+
+:root {
+  /* 颜色系统 */
+  --bg-gradient: radial-gradient(circle at top right, #111827, #030712);
+  --panel-bg: rgba(17, 24, 39, 0.7);
+  --panel-border: rgba(255, 255, 255, 0.08);
+  --panel-glow: 0 8px 32px 0 rgba(0, 0, 0, 0.37);
+  
+  --text-primary: #F3F4F6;
+  --text-secondary: #9CA3AF;
+  --text-muted: #6B7280;
+
+  /* 智能体专属色 */
+  --color-client: #3B82F6;       /* 科技蓝 - 客户经理 */
+  --color-diet: #10B981;         /* 翡翠绿 - 饮食助理 */
+  --color-ingredient: #F59E0B;   /* 活力黄 - 食材助理 */
+  --color-eval: #8B5CF6;         /* 迷幻紫 - 评估助理 */
+  --color-market: #EC4899;       /* 蜜桃粉 - 营销助理 */
+
+  --font-family: 'Outfit', 'Noto Sans SC', -apple-system, BlinkMacSystemFont, sans-serif;
+  --transition-smooth: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+/* 基础重置 */
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  font-family: var(--font-family);
+  background: var(--bg-gradient);
+  color: var(--text-primary);
+  min-height: 100dvh;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+/* 核心布局 */
+.app-container {
+  display: grid;
+  grid-template-columns: 320px 1fr;
+  grid-template-rows: 1fr 180px;
+  height: 100dvh;
+  width: 100vw;
+}
+
+/* 侧边栏：智能体拓扑与导航 */
+.sidebar {
+  grid-row: 1 / 3;
+  background: rgba(17, 24, 39, 0.85);
+  border-right: 1px solid var(--panel-border);
+  padding: 1.75rem;
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
+  overflow-y: auto;
+  z-index: 10;
+  position: relative;
+}
+
+.logo-section {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  margin-bottom: 1rem;
+}
+
+.logo-icon {
+  width: 40px;
+  height: 40px;
+  background: linear-gradient(135deg, var(--color-diet), var(--color-client));
+  border-radius: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 1.5rem;
+  box-shadow: 0 0 15px rgba(16, 185, 129, 0.4);
+}
+
+.logo-text h1 {
+  font-size: 1.15rem;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+  background: linear-gradient(to right, #ffffff, var(--text-secondary));
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+
+.logo-text span {
+  font-size: 0.7rem;
+  color: var(--text-muted);
+  text-transform: uppercase;
+}
+
+/* 智能体状态卡片列表 */
+.agent-list {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  position: relative;
+}
+
+/* 智能体连接导线背景效果 */
+.agent-list::before {
+  content: '';
+  position: absolute;
+  left: 28px;
+  top: 25px;
+  bottom: 25px;
+  width: 2px;
+  background: linear-gradient(to bottom, 
+    var(--color-client), 
+    var(--color-diet), 
+    var(--color-ingredient), 
+    var(--color-eval), 
+    var(--color-market)
+  );
+  opacity: 0.2;
+  z-index: 1;
+}
+
+.agent-card {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  padding: 0.85rem 1rem;
+  border-radius: 14px;
+  background: rgba(31, 41, 55, 0.4);
+  border: 1px solid rgba(255, 255, 255, 0.03);
+  cursor: pointer;
+  transition: var(--transition-smooth);
+  z-index: 2;
+}
+
+.agent-card:hover {
+  background: rgba(31, 41, 55, 0.6);
+  border-color: rgba(255, 255, 255, 0.08);
+  transform: translateX(3px);
+}
+
+.agent-card.active {
+  background: rgba(255, 255, 255, 0.05);
+  box-shadow: var(--panel-glow);
+}
+
+.agent-avatar {
+  width: 38px;
+  height: 38px;
+  border-radius: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 1.25rem;
+  font-weight: bold;
+  background: #374151;
+  transition: var(--transition-smooth);
+}
+
+/* 激活状态和颜色定制 */
+.agent-card[data-agent="client"].active { border-color: var(--color-client); }
+.agent-card[data-agent="client"].active .agent-avatar { background: var(--color-client); box-shadow: 0 0 12px rgba(59, 130, 246, 0.5); }
+.agent-card[data-agent="diet"].active { border-color: var(--color-diet); }
+.agent-card[data-agent="diet"].active .agent-avatar { background: var(--color-diet); box-shadow: 0 0 12px rgba(16, 185, 129, 0.5); }
+.agent-card[data-agent="ingredient"].active { border-color: var(--color-ingredient); }
+.agent-card[data-agent="ingredient"].active .agent-avatar { background: var(--color-ingredient); box-shadow: 0 0 12px rgba(245, 158, 11, 0.5); }
+.agent-card[data-agent="eval"].active { border-color: var(--color-eval); }
+.agent-card[data-agent="eval"].active .agent-avatar { background: var(--color-eval); box-shadow: 0 0 12px rgba(139, 92, 246, 0.5); }
+.agent-card[data-agent="market"].active { border-color: var(--color-market); }
+.agent-card[data-agent="market"].active .agent-avatar { background: var(--color-market); box-shadow: 0 0 12px rgba(236, 72, 153, 0.5); }
+
+.agent-info {
+  flex: 1;
+}
+
+.agent-name {
+  font-size: 0.85rem;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.agent-role {
+  font-size: 0.7rem;
+  color: var(--text-muted);
+  margin-top: 0.15rem;
+}
+
+.agent-status-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--text-muted);
+}
+
+.active .agent-status-dot {
+  background: #10B981;
+  animation: pulse-dot 1.5s infinite;
+}
+
+@keyframes pulse-dot {
+  0% { transform: scale(0.9); opacity: 0.6; }
+  50% { transform: scale(1.3); opacity: 1; }
+  100% { transform: scale(0.9); opacity: 0.6; }
+}
+
+/* 主工作区 */
+.workspace {
+  grid-column: 2 / 3;
+  grid-row: 1 / 2;
+  padding: 2rem;
+  overflow-y: auto;
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
+  overscroll-behavior: contain;
+}
+
+/* 顶部进度条 */
+.progress-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background: var(--panel-bg);
+  border: 1px solid var(--panel-border);
+  padding: 1rem 1.5rem;
+  border-radius: 16px;
+  backdrop-filter: blur(12px);
+}
+
+.steps-indicator {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  font-size: 0.9rem;
+}
+
+.steps-indicator span.active-step-num {
+  font-weight: 700;
+  color: var(--color-diet);
+}
+
+.progress-bar-container {
+  flex: 1;
+  max-width: 400px;
+  height: 6px;
+  background: rgba(255, 255, 255, 0.05);
+  border-radius: 3px;
+  margin-left: 2rem;
+  position: relative;
+  overflow: hidden;
+}
+
+.progress-bar-fill {
+  height: 100%;
+  width: 20%;
+  background: linear-gradient(to right, var(--color-client), var(--color-diet));
+  border-radius: 3px;
+  transition: width 0.5s ease-out;
+}
+
+/* 各步骤视图容器 */
+.step-view {
+  display: none;
+  animation: fade-in 0.4s ease-out forwards;
+  flex: 1;
+}
+
+.step-view.active {
+  display: flex;
+  flex-direction: column;
+}
+
+@keyframes fade-in {
+  from { opacity: 0; transform: translateY(10px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+/* 通用面板样式 */
+.glass-panel {
+  background: var(--panel-bg);
+  border: 1px solid var(--panel-border);
+  border-radius: 20px;
+  padding: 2rem;
+  backdrop-filter: blur(16px);
+  box-shadow: var(--panel-glow);
+}
+
+.panel-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 1.5rem;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+  padding-bottom: 0.75rem;
+}
+
+.panel-title {
+  font-size: 1.25rem;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+/* 步骤 1：问卷表单 */
+.questionnaire-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1.5rem;
+}
+
+.form-group {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.form-group.full-width {
+  grid-column: 1 / 3;
+}
+
+label {
+  font-size: 0.85rem;
+  font-weight: 500;
+  color: var(--text-secondary);
+}
+
+input, select, textarea {
+  background: rgba(17, 24, 39, 0.6);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  padding: 0.75rem 1rem;
+  border-radius: 10px;
+  color: var(--text-primary);
+  font-family: var(--font-family);
+  font-size: 0.9rem;
+  outline: none;
+  transition: var(--transition-smooth);
+}
+
+input:focus, select:focus, textarea:focus {
+  border-color: var(--color-client);
+  background: rgba(17, 24, 39, 0.8);
+  box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.2);
+}
+
+.range-slider-group {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+}
+
+.range-slider-group input[type="range"] {
+  flex: 1;
+  padding: 0;
+  cursor: pointer;
+}
+
+.range-val {
+  font-weight: 600;
+  min-width: 50px;
+  text-align: right;
+  font-size: 0.9rem;
+}
+
+.checkbox-pill-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.checkbox-pill-grid label {
+  cursor: pointer;
+}
+
+.checkbox-pill-grid input[type="checkbox"],
+.checkbox-pill-grid input[type="radio"] {
+  display: none;
+}
+
+.pill-button {
+  background: rgba(37, 41, 55, 0.4);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  padding: 0.5rem 1rem;
+  border-radius: 50px;
+  font-size: 0.85rem;
+  color: var(--text-secondary);
+  transition: var(--transition-smooth);
+  display: inline-block;
+}
+
+.checkbox-pill-grid input:checked + .pill-button {
+  background: rgba(59, 130, 246, 0.15);
+  border-color: var(--color-client);
+  color: var(--text-primary);
+  box-shadow: 0 0 10px rgba(59, 130, 246, 0.2);
+}
+
+/* 主操作按钮 */
+.action-btn {
+  background: linear-gradient(135deg, var(--color-client), #1E40AF);
+  color: #fff;
+  border: none;
+  padding: 0.85rem 2rem;
+  border-radius: 12px;
+  font-family: var(--font-family);
+  font-weight: 600;
+  cursor: pointer;
+  transition: var(--transition-smooth);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  margin-top: 1rem;
+}
+
+.action-btn:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 5px 15px rgba(59, 130, 246, 0.3);
+}
+
+.action-btn:active {
+  transform: translateY(0);
+}
+
+.action-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  transform: none;
+  box-shadow: none;
+}
+
+/* 智能体工作状态动画 */
+.processing-overlay {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 1.5rem;
+  height: 300px;
+}
+
+.spinner {
+  width: 60px;
+  height: 60px;
+  border: 4px solid rgba(255, 255, 255, 0.05);
+  border-top-color: var(--color-diet);
+  border-radius: 50%;
+  animation: spin 1s infinite linear;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+.processing-text {
+  font-size: 1rem;
+  color: var(--text-secondary);
+  font-weight: 500;
+  text-align: center;
+}
+
+/* 步骤 2：饮食方案列表 */
+.plans-wrapper {
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
+}
+
+.plans-selector-tabs {
+  display: flex;
+  gap: 1rem;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+  padding-bottom: 1rem;
+}
+
+.plan-tab {
+  flex: 1;
+  background: rgba(31, 41, 55, 0.3);
+  border: 1px solid rgba(255, 255, 255, 0.05);
+  padding: 1rem;
+  border-radius: 14px;
+  cursor: pointer;
+  transition: var(--transition-smooth);
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  text-align: left;
+}
+
+.plan-tab:hover {
+  background: rgba(31, 41, 55, 0.5);
+}
+
+.plan-tab.active {
+  background: rgba(16, 185, 129, 0.08);
+  border-color: var(--color-diet);
+}
+
+.plan-tab-title {
+  font-size: 0.95rem;
+  font-weight: 600;
+}
+
+.plan-tab-sub {
+  font-size: 0.75rem;
+  color: var(--text-secondary);
+}
+
+.plan-content-grid {
+  display: grid;
+  grid-template-columns: 2fr 1fr;
+  gap: 1.5rem;
+}
+
+.meals-list {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.meal-card {
+  background: rgba(31, 41, 55, 0.2);
+  border: 1px solid rgba(255, 255, 255, 0.03);
+  border-radius: 12px;
+  padding: 1rem 1.25rem;
+  display: flex;
+  gap: 1rem;
+  align-items: center;
+}
+
+.meal-icon {
+  width: 44px;
+  height: 44px;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.05);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 1.25rem;
+}
+
+.meal-details {
+  flex: 1;
+}
+
+.meal-name {
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--color-diet);
+  text-transform: uppercase;
+}
+
+.meal-food {
+  font-size: 0.95rem;
+  font-weight: 500;
+  margin-top: 0.15rem;
+}
+
+.meal-cals {
+  font-size: 0.8rem;
+  color: var(--text-secondary);
+  background: rgba(255, 255, 255, 0.04);
+  padding: 0.25rem 0.6rem;
+  border-radius: 20px;
+}
+
+/* 营养配比卡片与饼图 */
+.nutrition-card {
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
+  align-items: center;
+  justify-content: center;
+  background: rgba(31, 41, 55, 0.2);
+  border: 1px solid rgba(255, 255, 255, 0.03);
+  border-radius: 16px;
+  padding: 1.5rem;
+}
+
+.macro-chart-container {
+  position: relative;
+  width: 140px;
+  height: 140px;
+}
+
+.macro-cals-center {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  text-align: center;
+}
+
+.macro-cals-center .num {
+  font-size: 1.25rem;
+  font-weight: 700;
+}
+
+.macro-cals-center .lbl {
+  font-size: 0.65rem;
+  color: var(--text-secondary);
+  text-transform: uppercase;
+}
+
+.macro-legend {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.macro-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 0.8rem;
+}
+
+.macro-color {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  display: inline-block;
+  margin-right: 0.5rem;
+}
+
+.macro-item[data-macro="carbs"] .macro-color { background: #3B82F6; }
+.macro-item[data-macro="protein"] .macro-color { background: #EC4899; }
+.macro-item[data-macro="fat"] .macro-color { background: #F59E0B; }
+
+/* 步骤 3：食材清单 */
+.ingredients-accordion {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.category-group {
+  border: 1px solid rgba(255, 255, 255, 0.04);
+  border-radius: 12px;
+  background: rgba(31, 41, 55, 0.15);
+  overflow: hidden;
+}
+
+.category-header {
+  padding: 1rem 1.25rem;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  background: rgba(31, 41, 55, 0.3);
+  cursor: pointer;
+  user-select: none;
+}
+
+.category-title {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: var(--color-ingredient);
+}
+
+.category-toggle-icon {
+  font-size: 0.8rem;
+  color: var(--text-secondary);
+  transition: transform 0.2s;
+}
+
+.category-group.open .category-toggle-icon {
+  transform: rotate(180deg);
+}
+
+.category-content {
+  display: none;
+  padding: 1rem 1.25rem;
+  border-top: 1px solid rgba(255, 255, 255, 0.03);
+}
+
+.category-group.open .category-content {
+  display: block;
+}
+
+.ingredient-items-list {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.75rem;
+}
+
+.ingredient-item {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.5rem 0.75rem;
+  background: rgba(17, 24, 39, 0.3);
+  border-radius: 8px;
+  cursor: pointer;
+  transition: var(--transition-smooth);
+}
+
+.ingredient-item:hover {
+  background: rgba(17, 24, 39, 0.5);
+}
+
+.ingredient-item input[type="checkbox"] {
+  cursor: pointer;
+}
+
+.ingredient-item span.ing-name {
+  font-size: 0.85rem;
+  flex: 1;
+}
+
+.ingredient-item span.ing-qty {
+  font-size: 0.8rem;
+  color: var(--text-secondary);
+}
+
+.ingredient-item.checked span.ing-name {
+  text-decoration: line-line-through;
+  opacity: 0.4;
+  text-decoration: line-through;
+}
+
+/* 步骤 4：评估助理 */
+.evaluation-layout {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1.5rem;
+}
+
+.weight-sliders-card {
+  display: flex;
+  flex-direction: column;
+  gap: 1.25rem;
+}
+
+.weight-slider-item {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  background: rgba(31, 41, 55, 0.2);
+  padding: 1rem;
+  border-radius: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.02);
+}
+
+.weight-slider-header {
+  display: flex;
+  justify-content: space-between;
+  font-size: 0.85rem;
+}
+
+.weight-slider-header span.label {
+  font-weight: 500;
+}
+
+.weight-slider-header span.pct {
+  font-weight: 600;
+  color: var(--color-eval);
+}
+
+.evaluation-results-card {
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
+}
+
+.scores-comparison {
+  display: flex;
+  flex-direction: column;
+  gap: 1.25rem;
+}
+
+.score-row {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  padding: 0.75rem;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.02);
+  transition: var(--transition-smooth);
+}
+
+.score-row.winner {
+  background: rgba(139, 92, 246, 0.08);
+  border: 1px solid rgba(139, 92, 246, 0.2);
+}
+
+.score-row-header {
+  display: flex;
+  justify-content: space-between;
+  font-size: 0.85rem;
+}
+
+.score-row-title {
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.score-row-num {
+  font-weight: 700;
+  color: var(--color-eval);
+}
+
+.score-bar-bg {
+  height: 8px;
+  background: rgba(255, 255, 255, 0.05);
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.score-bar-fill {
+  height: 100%;
+  background: linear-gradient(to right, #6D28D9, var(--color-eval));
+  border-radius: 4px;
+  transition: width 0.4s ease-out;
+}
+
+.winner-banner {
+  background: rgba(16, 185, 129, 0.1);
+  border: 1px solid rgba(16, 185, 129, 0.2);
+  padding: 1rem;
+  border-radius: 12px;
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  font-size: 0.85rem;
+  margin-top: auto;
+}
+
+.winner-banner-icon {
+  font-size: 1.5rem;
+}
+
+/* 步骤 5：营销推广 */
+.marketing-tabs-container {
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
+}
+
+.marketing-tabs {
+  display: flex;
+  gap: 0.5rem;
+  background: rgba(17, 24, 39, 0.4);
+  padding: 0.25rem;
+  border-radius: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.03);
+}
+
+.marketing-tab-btn {
+  flex: 1;
+  background: transparent;
+  border: none;
+  padding: 0.6rem;
+  color: var(--text-secondary);
+  font-family: var(--font-family);
+  font-size: 0.85rem;
+  font-weight: 600;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: var(--transition-smooth);
+}
+
+.marketing-tab-btn.active {
+  background: var(--color-market);
+  color: #fff;
+  box-shadow: 0 4px 12px rgba(236, 72, 153, 0.3);
+}
+
+.marketing-panel {
+  display: none;
+  flex-direction: column;
+  gap: 1rem;
+  animation: fade-in 0.3s;
+}
+
+.marketing-panel.active {
+  display: flex;
+}
+
+.copy-box {
+  background: rgba(17, 24, 39, 0.8);
+  border: 1px solid rgba(255, 255, 255, 0.05);
+  border-radius: 12px;
+  padding: 1.25rem;
+  font-family: var(--font-family);
+  font-size: 0.9rem;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  max-height: 350px;
+  overflow-y: auto;
+  color: #E5E7EB;
+  user-select: text;
+}
+
+.copy-btn {
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  color: var(--text-primary);
+  padding: 0.6rem 1.2rem;
+  border-radius: 8px;
+  font-family: var(--font-family);
+  font-size: 0.85rem;
+  font-weight: 600;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  width: fit-content;
+  align-self: flex-end;
+  transition: var(--transition-smooth);
+}
+
+.copy-btn:hover {
+  background: rgba(255, 255, 255, 0.1);
+  border-color: rgba(255, 255, 255, 0.15);
+}
+
+.copy-btn.copied {
+  background: rgba(16, 185, 129, 0.15);
+  border-color: var(--color-diet);
+  color: #A7F3D0;
+}
+
+/* 底部实时智能体协作日志 */
+.console-panel {
+  grid-column: 2 / 3;
+  grid-row: 2 / 3;
+  background: #020617;
+  border-top: 1px solid var(--panel-border);
+  padding: 1rem 1.5rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  z-index: 10;
+  position: relative;
+}
+
+.console-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.console-title {
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.console-status {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--color-diet);
+  animation: pulse-dot 1s infinite;
+}
+
+.console-logs {
+  flex: 1;
+  overflow-y: auto;
+  font-family: 'Courier New', Courier, monospace;
+  font-size: 0.78rem;
+  line-height: 1.5;
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  padding-right: 0.5rem;
+  overscroll-behavior: contain;
+}
+
+.log-entry {
+  display: flex;
+  gap: 0.5rem;
+  align-items: flex-start;
+  animation: log-slide-up 0.25s ease-out forwards;
+}
+
+@keyframes log-slide-up {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.log-time {
+  color: var(--text-muted);
+  font-weight: 400;
+  white-space: nowrap;
+}
+
+.log-tag {
+  font-weight: bold;
+  padding: 0 0.3rem;
+  border-radius: 3px;
+  font-size: 0.72rem;
+  white-space: nowrap;
+}
+
+.log-tag.client { background: rgba(59, 130, 246, 0.15); color: var(--color-client); }
+.log-tag.diet { background: rgba(16, 185, 129, 0.15); color: var(--color-diet); }
+.log-tag.ingredient { background: rgba(245, 158, 11, 0.15); color: var(--color-ingredient); }
+.log-tag.eval { background: rgba(139, 92, 246, 0.15); color: var(--color-eval); }
+.log-tag.market { background: rgba(236, 72, 153, 0.15); color: var(--color-market); }
+.log-tag.system { background: rgba(255, 255, 255, 0.08); color: #fff; }
+
+.log-message {
+  color: #D1D5DB;
+  word-break: break-all;
+}
+
+/* 导航控制按钮容器 */
+.navigation-bar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-top: 1.5rem;
+  padding-top: 1rem;
+  border-top: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.nav-btn {
+  background: rgba(31, 41, 55, 0.5);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  color: var(--text-primary);
+  padding: 0.65rem 1.5rem;
+  border-radius: 10px;
+  font-family: var(--font-family);
+  font-weight: 600;
+  cursor: pointer;
+  transition: var(--transition-smooth);
+}
+
+.nav-btn:hover:not(:disabled) {
+  background: rgba(55, 65, 81, 0.6);
+  border-color: rgba(255, 255, 255, 0.15);
+}
+
+.nav-btn:disabled {
+  opacity: 0.3;
+  cursor: not-allowed;
+}
+
+/* 局部微调：问卷表单内部对齐 */
+.checkbox-card-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 0.75rem;
+}
+
+/* 营养信息指标 */
+.macro-stat {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.macro-stat-label {
+  font-size: 0.75rem;
+  color: var(--text-secondary);
+}
+
+.macro-stat-value {
+  font-size: 0.95rem;
+  font-weight: 600;
+}
+
+/* 滚动条定制 */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 3px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.2);
+}
+
+/* 移动端警告页 */
+@media (max-width: 900px) {
+  .app-container {
+    grid-template-columns: 1fr;
+    grid-template-rows: auto 1fr 150px;
+    height: auto;
+    min-height: 100dvh;
+    overflow: auto;
+  }
+  
+  .sidebar {
+    grid-row: 1 / 2;
+    grid-column: 1 / 2;
+    border-right: none;
+    border-bottom: 1px solid var(--panel-border);
+    height: auto;
+    max-height: 300px;
+  }
+  
+  .workspace {
+    grid-column: 1 / 2;
+    grid-row: 2 / 3;
+    height: auto;
+    overflow: visible;
+  }
+  
+  .console-panel {
+    grid-column: 1 / 2;
+    grid-row: 3 / 4;
+    height: 180px;
+  }
+}
+
+/* 弹窗及发布面板升级样式 */
+dialog {
+  border: 1px solid var(--panel-border);
+  box-shadow: var(--panel-glow);
+}
+
+dialog::backdrop {
+  background: rgba(2, 6, 23, 0.7);
+  backdrop-filter: blur(8px);
+}
+
+.publish-section {
+  border: 1px dashed rgba(236, 72, 153, 0.3) !important;
+  transition: var(--transition-smooth);
+}
+
+.publish-section:hover {
+  border-color: var(--color-market) !important;
+  box-shadow: 0 4px 20px rgba(236, 72, 153, 0.08) !important;
+}
