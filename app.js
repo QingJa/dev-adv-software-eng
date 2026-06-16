@@ -16,19 +16,473 @@ const state = {
   },
   selectedPlanIndex: 0,
   logsQueue: [],
-  isLogTyping: false
+  isLogTyping: false,
+  theme: "dark",
+  apiSwitch: {
+    queueDepth: 0,
+    totalRequests: 0,
+    totalResponses: 0,
+    totalErrors: 0,
+    lastRoute: "/api/v1/system/boot",
+    activeChannels: []
+  },
+  dataLayer: {
+    cacheHits: 0,
+    cacheWrites: 0,
+    persistenceReads: 0,
+    persistenceWrites: 0,
+    lastKey: "system.boot"
+  },
+  edgeCompute: {
+    location: "端侧待命",
+    bmi: "--",
+    bmr: "--",
+    tdee: "--",
+    runtimeMs: 0,
+    cacheState: "cold"
+  },
+  aiDebate: {
+    reviews: [],
+    consensus: []
+  },
+  apiEvents: []
+};
+
+const STORAGE_KEYS = {
+  records: "dietPlannerSevenLayerRecordsV1",
+  apiEvents: "dietPlannerApiEventsV1"
+};
+
+const memoryCache = new Map();
+let persistentRecords = {};
+
+const architectureRegistry = {
+  cloudProviders: [
+    {
+      id: "doubao",
+      name: "豆包 Doubao",
+      shortName: "豆",
+      role: "生活化表达与可执行建议",
+      latency: 96,
+      cost: "低",
+      specialty: "口味适配"
+    },
+    {
+      id: "qianwen",
+      name: "通义千问 Qianwen",
+      shortName: "千",
+      role: "结构化推理与中文语义",
+      latency: 112,
+      cost: "中",
+      specialty: "方案解释"
+    },
+    {
+      id: "deepseek",
+      name: "DeepSeek DS",
+      shortName: "DS",
+      role: "数学评分与对抗校验",
+      latency: 128,
+      cost: "低",
+      specialty: "量化评审"
+    }
+  ],
+  businessContainers: [
+    { id: "client", name: "customer-manager", api: "/api/v1/profile/create" },
+    { id: "diet", name: "diet-planner", api: "/api/v1/diet/plans" },
+    { id: "ingredient", name: "ingredient-planner", api: "/api/v1/ingredients/list" },
+    { id: "eval", name: "evaluation-engine", api: "/api/v1/evaluation/score" },
+    { id: "market", name: "marketing-writer", api: "/api/v1/marketing/content" }
+  ],
+  apiRoutes: [
+    { route: "/api/v1/system/boot", method: "POST", owner: "switch", latency: 48 },
+    { route: "/api/v1/profile/create", method: "POST", owner: "client", latency: 72 },
+    { route: "/api/v1/diet/plans", method: "POST", owner: "diet", latency: 110 },
+    { route: "/api/v1/ingredients/list", method: "POST", owner: "ingredient", latency: 96 },
+    { route: "/api/v1/evaluation/score", method: "POST", owner: "eval", latency: 120 },
+    { route: "/api/v1/cloud/providers/review", method: "POST", owner: "cloud", latency: 140 },
+    { route: "/api/v1/marketing/content", method: "POST", owner: "market", latency: 100 },
+    { route: "/api/v1/publish/package", method: "POST", owner: "market", latency: 80 }
+  ]
+};
+
+const apiSwitch = {
+  request(route, payload = {}, options = {}) {
+    const routeConfig = architectureRegistry.apiRoutes.find(item => item.route === route);
+    const envelope = createApiEnvelope(route, payload, {
+      method: options.method || routeConfig?.method || "POST",
+      source: options.source || "ui-controller",
+      target: options.target || routeConfig?.owner || "switch",
+      duplex: options.duplex !== false
+    });
+    const latency = options.latency || routeConfig?.latency || 90;
+    const channel = `${envelope.source}->${envelope.target}`;
+
+    state.apiSwitch.queueDepth += 1;
+    state.apiSwitch.totalRequests += 1;
+    state.apiSwitch.lastRoute = route;
+    state.apiSwitch.activeChannels = Array.from(new Set([...state.apiSwitch.activeChannels, channel]));
+    registerApiEvent("request", envelope);
+    renderApiSwitchMetrics();
+
+    return new Promise((resolve) => {
+      setTimeout(() => {
+        state.apiSwitch.queueDepth = Math.max(0, state.apiSwitch.queueDepth - 1);
+        state.apiSwitch.totalResponses += 1;
+        state.apiSwitch.activeChannels = state.apiSwitch.activeChannels.filter(item => item !== channel);
+
+        const response = {
+          ...envelope,
+          responseAt: new Date().toISOString(),
+          latency,
+          ok: true,
+          data: {
+            accepted: true,
+            route,
+            traceId: envelope.traceId
+          }
+        };
+
+        registerApiEvent("response", response);
+        renderApiSwitchMetrics();
+        resolve(response);
+      }, latency);
+    });
+  }
 };
 
 // 页面 DOM 加载完毕后执行初始化
 document.addEventListener("DOMContentLoaded", () => {
+  initTheme();
+  initArchitectureRuntime();
   initEventListeners();
   initWeightSliders();
   addSystemLog("system", "系统初始化完成。多智能体协作总线正处于待命状态。");
+  addSystemLog("switch", "API Switch 已以 FastAPI 风格路由启动：/api/v1/*，请求/响应事件均为异步非阻塞。");
   addSystemLog("client", "您好！我是您的客户经理。请填写左侧的基础健康问卷，我将为您建立数字画像。");
 });
 
+function initTheme() {
+  const storedTheme = localStorage.getItem("dietPlannerTheme");
+  const prefersLight = window.matchMedia && window.matchMedia("(prefers-color-scheme: light)").matches;
+  setTheme(storedTheme || (prefersLight ? "light" : "dark"));
+}
+
+function setTheme(theme) {
+  state.theme = theme === "light" ? "light" : "dark";
+  document.documentElement.dataset.theme = state.theme;
+
+  const icon = document.getElementById("themeToggleIcon");
+  if (icon) {
+    icon.innerText = state.theme === "light" ? "☾" : "☀";
+  }
+
+  localStorage.setItem("dietPlannerTheme", state.theme);
+}
+
+function copyTextToClipboard(text) {
+  if (navigator.clipboard && window.isSecureContext) {
+    return navigator.clipboard.writeText(text);
+  }
+
+  return new Promise((resolve, reject) => {
+    const textArea = document.createElement("textarea");
+    textArea.value = text;
+    textArea.setAttribute("readonly", "");
+    textArea.style.position = "fixed";
+    textArea.style.left = "-9999px";
+    document.body.appendChild(textArea);
+    textArea.select();
+
+    try {
+      const copied = document.execCommand("copy");
+      document.body.removeChild(textArea);
+      copied ? resolve() : reject(new Error("execCommand copy failed"));
+    } catch (err) {
+      document.body.removeChild(textArea);
+      reject(err);
+    }
+  });
+}
+
+function initArchitectureRuntime() {
+  persistentRecords = loadPersistentRecords();
+  state.dataLayer.persistenceReads += 1;
+  saveDataRecord("system.boot", {
+    bootAt: new Date().toISOString(),
+    layers: 7,
+    providers: architectureRegistry.cloudProviders.map(provider => provider.name)
+  });
+  renderArchitectureRuntime();
+  renderAiDebate();
+  apiSwitch.request("/api/v1/system/boot", { status: "ready" }, {
+    source: "ui-controller",
+    target: "api-switch",
+    latency: 48
+  });
+}
+
+function loadPersistentRecords() {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEYS.records);
+    return raw ? JSON.parse(raw) : {};
+  } catch (err) {
+    console.warn("读取持久化数据失败", err);
+    return {};
+  }
+}
+
+function persistRecords() {
+  try {
+    localStorage.setItem(STORAGE_KEYS.records, JSON.stringify(persistentRecords));
+    state.dataLayer.persistenceWrites += 1;
+  } catch (err) {
+    console.warn("写入持久化数据失败", err);
+  }
+}
+
+function saveDataRecord(key, value) {
+  const record = {
+    key,
+    value,
+    updatedAt: new Date().toISOString()
+  };
+
+  memoryCache.set(key, record);
+  persistentRecords[key] = record;
+  state.dataLayer.cacheWrites += 1;
+  state.dataLayer.lastKey = key;
+  persistRecords();
+  renderDataLayerStatus();
+  return record;
+}
+
+function readDataRecord(key) {
+  if (memoryCache.has(key)) {
+    state.dataLayer.cacheHits += 1;
+    state.dataLayer.lastKey = key;
+    renderDataLayerStatus();
+    return memoryCache.get(key);
+  }
+
+  if (persistentRecords[key]) {
+    memoryCache.set(key, persistentRecords[key]);
+    state.dataLayer.persistenceReads += 1;
+    state.dataLayer.lastKey = key;
+    renderDataLayerStatus();
+    return persistentRecords[key];
+  }
+
+  renderDataLayerStatus();
+  return null;
+}
+
+function createApiEnvelope(route, payload, meta = {}) {
+  return {
+    traceId: `trace-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`,
+    protocol: "DietPlannerAPI/1.0",
+    method: meta.method || "POST",
+    route,
+    source: meta.source || "ui-controller",
+    target: meta.target || "api-switch",
+    duplex: meta.duplex !== false,
+    payload,
+    meta: {
+      contentType: "application/json",
+      transport: "in-browser-fastapi-style",
+      nonBlocking: true
+    },
+    createdAt: new Date().toISOString()
+  };
+}
+
+function registerApiEvent(type, envelope) {
+  const event = {
+    type,
+    traceId: envelope.traceId,
+    route: envelope.route,
+    source: envelope.source,
+    target: envelope.target,
+    at: new Date().toISOString()
+  };
+
+  state.apiEvents.unshift(event);
+  state.apiEvents = state.apiEvents.slice(0, 20);
+
+  try {
+    localStorage.setItem(STORAGE_KEYS.apiEvents, JSON.stringify(state.apiEvents));
+  } catch (err) {
+    console.warn("写入 API 事件失败", err);
+  }
+}
+
+function renderArchitectureRuntime() {
+  renderLayerStatusList();
+  renderCloudProviders();
+  renderApiSwitchMetrics();
+  renderDataLayerStatus();
+  renderEdgeComputeStatus();
+}
+
+function renderLayerStatusList() {
+  const container = document.getElementById("layerStatusList");
+  if (!container) return;
+
+  const layerItems = [
+    "L1 云端 AI：豆包 / 千问 / DeepSeek 在线",
+    "L2 数据层：Map 热缓存 + localStorage 持久化",
+    "L3 业务层：5 个 Agent 容器 + 多 API",
+    "L4 API 层：统一 JSON 协议信封",
+    "L5 Switch：全双工异步非阻塞调度",
+    "L6 UI：Model / ViewModel / Controller",
+    "L7 端边：浏览器端侧计算 + 云端协同"
+  ];
+
+  container.innerHTML = layerItems.map(item => `
+    <div class="layer-status-item">${item}</div>
+  `).join("");
+}
+
+function renderCloudProviders() {
+  const container = document.getElementById("cloudProviderGrid");
+  if (!container) return;
+
+  container.innerHTML = architectureRegistry.cloudProviders.map(provider => `
+    <div class="provider-card">
+      <div>
+        <div class="provider-name">${provider.name}</div>
+        <div class="provider-meta">${provider.role} · ${provider.latency}ms · 成本${provider.cost}</div>
+      </div>
+      <span class="provider-status" title="${provider.specialty}"></span>
+    </div>
+  `).join("");
+}
+
+function renderApiSwitchMetrics() {
+  const container = document.getElementById("apiSwitchMetrics");
+  if (!container) return;
+
+  const routes = architectureRegistry.apiRoutes.slice(1, 7).map(item => item.route.replace("/api/v1/", ""));
+  const containers = architectureRegistry.businessContainers.map(item => item.name);
+  const activeChannels = state.apiSwitch.activeChannels.length > 0
+    ? state.apiSwitch.activeChannels
+    : ["ui-controller<->api-switch"];
+
+  container.innerHTML = `
+    <div class="switch-metric-row">
+      <div class="metric-label">队列 / 请求 / 响应</div>
+      <div class="metric-value">${state.apiSwitch.queueDepth} / ${state.apiSwitch.totalRequests} / ${state.apiSwitch.totalResponses}</div>
+    </div>
+    <div class="switch-metric-row">
+      <div class="metric-label">最近路由</div>
+      <div class="metric-value">${state.apiSwitch.lastRoute}</div>
+    </div>
+    <div class="switch-metric-row">
+      <div class="metric-label">全双工通道</div>
+      <div class="duplex-channel-list">
+        ${activeChannels.map(channel => `<span class="duplex-channel-pill ${state.apiSwitch.activeChannels.length ? "active" : ""}">${channel}</span>`).join("")}
+      </div>
+    </div>
+    <div class="switch-metric-row">
+      <div class="metric-label">FastAPI 风格路由</div>
+      <div class="api-route-list">
+        ${routes.map(route => `<span class="api-route-pill">${route}</span>`).join("")}
+      </div>
+    </div>
+    <div class="switch-metric-row">
+      <div class="metric-label">业务容器</div>
+      <div class="api-route-list">
+        ${containers.map(name => `<span class="api-route-pill">${name}</span>`).join("")}
+      </div>
+    </div>
+  `;
+}
+
+function renderDataLayerStatus() {
+  const container = document.getElementById("dataLayerStatus");
+  if (!container) return;
+
+  const persistedKeys = Object.keys(persistentRecords).length;
+  container.innerHTML = `
+    <div class="data-status-row">
+      <div class="data-label">热缓存 Map</div>
+      <div class="data-value">${memoryCache.size} 条记录 · 命中 ${state.dataLayer.cacheHits} 次</div>
+    </div>
+    <div class="data-status-row">
+      <div class="data-label">持久化 localStorage</div>
+      <div class="data-value">${persistedKeys} 条快照 · 写入 ${state.dataLayer.persistenceWrites} 次</div>
+    </div>
+    <div class="data-status-row">
+      <div class="data-label">最近数据键</div>
+      <div class="data-value">${state.dataLayer.lastKey}</div>
+    </div>
+  `;
+}
+
+function renderEdgeComputeStatus() {
+  const container = document.getElementById("edgeComputeStatus");
+  if (!container) return;
+
+  container.innerHTML = `
+    <div class="edge-status-row">
+      <div class="edge-label">计算位置</div>
+      <div class="edge-value">${state.edgeCompute.location}</div>
+    </div>
+    <div class="edge-status-row">
+      <div class="edge-label">BMI / BMR / TDEE</div>
+      <div class="edge-value">${state.edgeCompute.bmi} / ${state.edgeCompute.bmr} / ${state.edgeCompute.tdee}</div>
+    </div>
+    <div class="edge-status-row">
+      <div class="edge-label">端侧耗时 / 缓存态</div>
+      <div class="edge-value">${state.edgeCompute.runtimeMs}ms / ${state.edgeCompute.cacheState}</div>
+    </div>
+  `;
+}
+
+function computeEdgeProfile(formData) {
+  const startedAt = performance.now();
+  const bmi = formData.weight / Math.pow(formData.height / 100, 2);
+  const bmr = formData.gender === "male"
+    ? 10 * formData.weight + 6.25 * formData.height - 5 * formData.age + 5
+    : 10 * formData.weight + 6.25 * formData.height - 5 * formData.age - 161;
+  const activityMap = {
+    sedentary: 1.2,
+    light: 1.375,
+    moderate: 1.55,
+    heavy: 1.725
+  };
+  const tdee = Math.round(bmr * (activityMap[formData.activity] || 1.2));
+  const cacheKey = `edge.profile.${formData.gender}.${formData.age}.${formData.height}.${formData.weight}.${formData.activity}`;
+  const cached = readDataRecord(cacheKey);
+  const runtimeMs = Math.max(1, Math.round(performance.now() - startedAt));
+
+  state.edgeCompute = {
+    location: "浏览器端侧计算",
+    bmi: bmi.toFixed(1),
+    bmr: `${Math.round(bmr)} kcal`,
+    tdee: `${tdee} kcal`,
+    runtimeMs,
+    cacheState: cached ? "warm cache" : "new compute"
+  };
+
+  if (!cached) {
+    saveDataRecord(cacheKey, state.edgeCompute);
+  }
+
+  renderEdgeComputeStatus();
+  return state.edgeCompute;
+}
+
 // 初始化事件监听
 function initEventListeners() {
+  const themeToggle = document.getElementById("themeToggle");
+  if (themeToggle) {
+    themeToggle.addEventListener("click", () => {
+      const nextTheme = state.theme === "dark" ? "light" : "dark";
+      setTheme(nextTheme);
+      addSystemLog("system", `界面主题已切换为${nextTheme === "light" ? "浅色" : "深色"}模式。`);
+    });
+  }
+
   // 提交问卷按钮
   const submitBtn = document.getElementById("submitFormBtn");
   if (submitBtn) {
@@ -53,13 +507,14 @@ function initEventListeners() {
   // 营销推广 Tab 切换
   document.querySelectorAll(".marketing-tab-btn").forEach(btn => {
     btn.addEventListener("click", (e) => {
-      const platform = e.target.getAttribute("data-platform");
+      const tabButton = e.currentTarget;
+      const platform = tabButton.getAttribute("data-platform");
       document.querySelectorAll(".marketing-tab-btn").forEach(b => b.classList.remove("active"));
       document.querySelectorAll(".marketing-panel").forEach(p => p.classList.remove("active"));
       
-      e.target.classList.add("active");
+      tabButton.classList.add("active");
       document.getElementById(`market-${platform}`).classList.add("active");
-      addSystemLog("market", `已切换到【${e.target.innerText}】生成面板。`);
+      addSystemLog("market", `已切换到【${tabButton.innerText}】生成面板。`);
     });
   });
 
@@ -69,7 +524,7 @@ function initEventListeners() {
       const targetId = btn.getAttribute("data-target");
       const textToCopy = document.getElementById(targetId).innerText;
       
-      navigator.clipboard.writeText(textToCopy).then(() => {
+      copyTextToClipboard(textToCopy).then(() => {
         const origText = btn.innerHTML;
         btn.innerHTML = `<span>✓</span> <span>已复制成功！</span>`;
         btn.classList.add("copied");
@@ -91,6 +546,10 @@ function initEventListeners() {
   if (restartBtn) {
     restartBtn.addEventListener("click", () => {
       state.currentStep = 1;
+      state.formData = {};
+      state.plans = [];
+      state.activePlanIndex = 0;
+      state.selectedPlanIndex = 0;
       document.getElementById("healthForm").reset();
       document.getElementById("ageVal").innerText = "28";
       document.getElementById("heightVal").innerText = "165";
@@ -102,6 +561,18 @@ function initEventListeners() {
       document.getElementById("weightSeason").value = 33;
       document.getElementById("weightRegion").value = 34;
       updateWeightTextDisplays();
+      state.edgeCompute = {
+        location: "端侧待命",
+        bmi: "--",
+        bmr: "--",
+        tdee: "--",
+        runtimeMs: 0,
+        cacheState: "cold"
+      };
+      state.aiDebate = { reviews: [], consensus: [] };
+      saveDataRecord("session.reset", { resetAt: new Date().toISOString() });
+      renderArchitectureRuntime();
+      renderAiDebate();
 
       goToStep(1);
       
@@ -129,7 +600,12 @@ function initEventListeners() {
   const openDialogBtn = document.getElementById("openPublishDialogBtn");
   if (openDialogBtn) {
     openDialogBtn.addEventListener("click", () => {
-      document.getElementById("publishDialog").showModal();
+      const dialog = document.getElementById("publishDialog");
+      if (dialog && typeof dialog.showModal === "function") {
+        dialog.showModal();
+      } else {
+        alert("当前浏览器不支持原生弹窗，请查看页面中的发布助手说明。");
+      }
     });
   }
 }
@@ -143,6 +619,7 @@ function initWeightSliders() {
   };
 
   const keys = ["cost", "season", "region"];
+  if (keys.some(key => !sliders[key])) return;
 
   keys.forEach(key => {
     sliders[key].addEventListener("input", (e) => {
@@ -190,20 +667,29 @@ function initWeightSliders() {
 
 // 更新权重显示的文本数值
 function updateWeightTextDisplays() {
-  document.getElementById("weightCostText").innerText = `${state.weights.cost}%`;
-  document.getElementById("weightSeasonText").innerText = `${state.weights.season}%`;
-  document.getElementById("weightRegionText").innerText = `${state.weights.region}%`;
+  const costText = document.getElementById("weightCostText");
+  const seasonText = document.getElementById("weightSeasonText");
+  const regionText = document.getElementById("weightRegionText");
+
+  if (!costText || !seasonText || !regionText) return;
+
+  costText.innerText = `${state.weights.cost}%`;
+  seasonText.innerText = `${state.weights.season}%`;
+  regionText.innerText = `${state.weights.region}%`;
 }
 
 // 切换到具体步骤 (静态页面显示控制)
 function goToStep(step) {
+  const targetView = document.getElementById(`step-${step}`);
+  if (!targetView) return;
+
   state.currentStep = step;
   
   // 切换所有 View 的显示状态
   document.querySelectorAll(".step-view").forEach(view => {
     view.classList.remove("active");
   });
-  document.getElementById(`step-${step}`).classList.add("active");
+  targetView.classList.add("active");
 
   // 更新进度条和高亮标题
   const progressPercent = step * 20;
@@ -225,7 +711,8 @@ function goToStep(step) {
 
   const agentMapping = ["client", "diet", "ingredient", "eval", "market"];
   const currentAgent = agentMapping[step - 1];
-  document.getElementById(`agent-${currentAgent}`).classList.add("active");
+  const agentEl = document.getElementById(`agent-${currentAgent}`);
+  if (agentEl) agentEl.classList.add("active");
 }
 
 // 带加载动画和日志的智能体步骤流转
@@ -242,9 +729,17 @@ function triggerStepTransition(targetStep) {
   // 注入不同步骤的智能体日志流
   if (targetStep === 2) {
     processingText.innerText = "饮食助理正在根据画像为您设计膳食规划...";
+
+    apiSwitch.request("/api/v1/diet/plans", {
+      profile: state.formData,
+      edgeCompute: state.edgeCompute
+    }, {
+      source: "customer-manager",
+      target: "diet-planner"
+    });
     
     enqueueLog("client", "问卷收集完成，正在处理过滤字段、排查过敏源...");
-    enqueueLog("system", "用户健康画像序列化打包完成。正通过消息队列发送至 [饮食助理]。");
+    enqueueLog("switch", "用户健康画像已封装为通用 API 信封，正通过 Switch 发送至 [饮食助理]。");
     enqueueLog("diet", "收到用户健康画像！");
     enqueueLog("diet", `目标：${translateGoal(state.formData.goal)} | 饮食风格：${translateHabit(state.formData.dietHabit)}`);
     enqueueLog("diet", `过敏排除食材：${state.formData.allergies.length > 0 ? state.formData.allergies.map(translateAllergy).join('、') : '无'}`);
@@ -254,8 +749,9 @@ function triggerStepTransition(targetStep) {
     calculateAndGenerateDietData();
 
     enqueueLog("diet", `计算完成。基础代谢(BMR) ≈ ${state.bmr} kcal，日消耗(TDEE) ≈ ${state.tdee} kcal。每日饮食热量靶点设定。`);
-    enqueueLog("diet", "已成功为您定制了3套侧重点不同的健康饮食方案：\n1️⃣ 方案 A (低碳水/核心诉求)\n2️⃣ 方案 B (高蛋白/高纤膳食)\n3️⃣ 方案 C (地中海温和食谱)");
+    enqueueLog("diet", `已成功为您定制了3套侧重点不同的健康饮食方案：\n1. ${state.plans[0].name}\n2. ${state.plans[1].name}\n3. ${state.plans[2].name}`);
     enqueueLog("diet", "已将膳食数据流发送给 [食材助理] 进行采购量核查。");
+    saveDataRecord("diet.plans.current", state.plans);
     
     setTimeout(() => {
       goToStep(2);
@@ -264,6 +760,14 @@ function triggerStepTransition(targetStep) {
 
   } else if (targetStep === 3) {
     processingText.innerText = "食材助理正在拆解膳食结构，生成食材采购清单...";
+
+    apiSwitch.request("/api/v1/ingredients/list", {
+      activePlanIndex: state.activePlanIndex,
+      plans: state.plans.map(plan => ({ name: plan.name, meals: plan.meals }))
+    }, {
+      source: "diet-planner",
+      target: "ingredient-planner"
+    });
     
     enqueueLog("ingredient", "收到饮食方案包。开始进行食材拆解与用量折算...");
     enqueueLog("ingredient", `分析配菜风格为：${translateRegion(state.formData.region)}...`);
@@ -274,7 +778,12 @@ function triggerStepTransition(targetStep) {
     }
 
     enqueueLog("ingredient", "已对3套方案分别计算出：生鲜肉蛋奶类、时令蔬菜水果类、膳食粗粮谷物类以及调味耗材的具体用量。");
+    enqueueLog("switch", "食材清单通过 POST /api/v1/ingredients/list 完成路由，准备送入评估容器。");
     enqueueLog("ingredient", "食材清单规划完成。加入了高温储鲜与保水防潮建议。发送给 [评估助理] 进行可行性打分。");
+    saveDataRecord("ingredients.current", state.plans.map(plan => ({
+      name: plan.name,
+      ingredients: plan.ingredients
+    })));
 
     setTimeout(() => {
       goToStep(3);
@@ -283,21 +792,39 @@ function triggerStepTransition(targetStep) {
 
   } else if (targetStep === 4) {
     processingText.innerText = "评估助理正在基于成本、地域、夏季时令进行多维评分...";
+
+    apiSwitch.request("/api/v1/evaluation/score", {
+      weights: state.weights,
+      plans: state.plans.map(plan => ({ name: plan.name, scores: plan.scores }))
+    }, {
+      source: "ingredient-planner",
+      target: "evaluation-engine"
+    });
     
     enqueueLog("eval", "接管数据流。启动综合推荐评分模型...");
     enqueueLog("eval", `引入约束条件：[夏季生鲜时令指数]、[${translateRegion(state.formData.region)}食材物价指数]、[营养均衡比例评估]。`);
     enqueueLog("eval", `当前推荐权重设为 -> 成本控制: ${state.weights.cost}% | 季节适宜: ${state.weights.season}% | 地域匹配: ${state.weights.region}%`);
     enqueueLog("eval", "正在使用归一化加权公式实时计算 3 个方案的最终健康推荐评分。");
+    enqueueLog("switch", "Switch 已并行唤起豆包、千问、DeepSeek 三个云端 Provider 做多 AI 对抗评审。");
 
     setTimeout(() => {
       goToStep(4);
       evaluatePlansRealtime();
+      runAiDebateForPlans();
       enqueueLog("eval", `打分已就绪！当前判定综合得分最高的是：【${state.plans[state.selectedPlanIndex].name}】。`);
       enqueueLog("eval", "用户可手动调节权重滑块重新评估。确定最终方案后将发送给 [营销助理] 生成文案。");
     }, 2500);
 
   } else if (targetStep === 5) {
     processingText.innerText = "营销助理正在提取膳食精髓，撰写多渠道宣传推广内容...";
+
+    apiSwitch.request("/api/v1/marketing/content", {
+      selectedPlanIndex: state.selectedPlanIndex,
+      selectedPlan: state.plans[state.selectedPlanIndex]
+    }, {
+      source: "evaluation-engine",
+      target: "marketing-writer"
+    });
     
     enqueueLog("market", `收到最终选定食谱：【${state.plans[state.selectedPlanIndex].name}】。`);
     enqueueLog("market", "开始提取核心亮点：低热量、营养均衡、风味特色...");
@@ -339,6 +866,15 @@ function handleFormSubmit() {
     allergies: allergies
   };
 
+  computeEdgeProfile(state.formData);
+  saveDataRecord("profile.current", state.formData);
+  apiSwitch.request("/api/v1/profile/create", state.formData, {
+    source: "ui-controller",
+    target: "customer-manager"
+  });
+  enqueueLog("data", "用户画像已写入数据层：端侧热缓存 Map + localStorage 持久化快照。");
+  enqueueLog("switch", "画像创建请求已进入 API Switch：POST /api/v1/profile/create。");
+
   // 开启多智能体流转动画，流转到步骤 2 (饮食助理)
   triggerStepTransition(2);
 }
@@ -377,30 +913,43 @@ function calculateAndGenerateDietData() {
   state.bmr = Math.round(bmr);
   state.tdee = tdee;
   state.targetCalories = targetCalories;
+  state.edgeCompute = {
+    ...state.edgeCompute,
+    location: "浏览器端侧计算 + 云端协同",
+    bmr: `${state.bmr} kcal`,
+    tdee: `${state.tdee} kcal`
+  };
+  renderEdgeComputeStatus();
 
   // 2. 生成食谱与食材内容
   
   // 处理地域菜品名称与过敏源替换
-  const localDishes = getLocalDishes(f.region, f.allergies);
-  const proteins = getProteins(f.allergies);
+  const localDishes = getLocalDishes(f.region, f.allergies, f.dietHabit);
+  const proteins = getProteins(f.allergies, f.dietHabit);
   const carbSource = getCarbs(f.allergies);
-  const snackOption = getSnacks(f.allergies);
+  const snackOption = getSnacks(f.allergies, f.dietHabit);
+  const blueprints = getPlanBlueprints(f.goal, f.dietHabit);
+  const isVegan = f.dietHabit === "vegan";
+  const avoidDairy = f.allergies.includes("dairy");
+  const avoidGluten = f.allergies.includes("gluten");
+  const eggItem = isVegan ? "卤水豆腐80g" : "水煮蛋1个";
+  const eggIngredient = isVegan ? { name: "北豆腐", qty: "80g" } : { name: "柴鸡蛋", qty: "1个" };
+  const breakfastDrink = avoidDairy || isVegan ? "无糖豆浆" : "无糖燕麦奶";
+  const yogurtItem = avoidDairy || isVegan ? "无糖椰子酸奶" : "低脂酸奶";
+  const breadItem = avoidGluten ? "藜麦饭团80g" : "全麦切片面包2片";
 
-  // 方案 A：针对用户习惯/目标的定制食谱 (如低碳减脂)
-  const planA_Cals = Math.round(targetCalories * 0.95);
-  // 方案 B：高蛋白/高膳食纤维均衡食谱
-  const planB_Cals = Math.round(targetCalories);
-  // 方案 C：地中海健康油脂轻生活食谱
-  const planC_Cals = Math.round(targetCalories * 1.05);
+  const planA_Cals = Math.round(targetCalories * blueprints[0].calorieFactor);
+  const planB_Cals = Math.round(targetCalories * blueprints[1].calorieFactor);
+  const planC_Cals = Math.round(targetCalories * blueprints[2].calorieFactor);
 
   state.plans = [
     {
-      name: "方案 A：轻盈减脂低碳膳食",
-      sub: "专注控制升糖与胰岛素，适合减碳需求",
+      name: blueprints[0].name,
+      sub: blueprints[0].sub,
       calories: planA_Cals,
-      macros: { carbs: 25, protein: 45, fat: 30 },
+      macros: blueprints[0].macros,
       meals: [
-        { name: "早餐", icon: "🌅", food: `水煮蛋1个 + 无糖豆浆1杯 + ${carbSource.morning}`, cals: `${Math.round(planA_Cals * 0.25)} kcal` },
+        { name: "早餐", icon: "🌅", food: `${eggItem} + 无糖豆浆1杯 + ${carbSource.morning}`, cals: `${Math.round(planA_Cals * 0.25)} kcal` },
         { name: "午餐", icon: "☀️", food: `${localDishes.lunchA} + 水煮西兰花150g`, cals: `${Math.round(planA_Cals * 0.4)} kcal` },
         { name: "晚餐", icon: "🌙", food: `${localDishes.dinnerA} + 白灼菜心200g`, cals: `${Math.round(planA_Cals * 0.25)} kcal` },
         { name: "加餐", icon: "🍎", food: `${snackOption.snackA}`, cals: `${Math.round(planA_Cals * 0.1)} kcal` }
@@ -408,7 +957,7 @@ function calculateAndGenerateDietData() {
       ingredients: {
         meat: [
           { name: proteins.proteinA, qty: "180g" },
-          { name: "柴鸡蛋", qty: "1个" }
+          eggIngredient
         ],
         veggies: [
           { name: "西兰花", qty: "150g" },
@@ -431,12 +980,12 @@ function calculateAndGenerateDietData() {
       }
     },
     {
-      name: "方案 B：黄金膳食纤维能量餐",
-      sub: "以复合谷物与高膳食纤维为主，饱腹感强",
+      name: blueprints[1].name,
+      sub: blueprints[1].sub,
       calories: planB_Cals,
-      macros: { carbs: 50, protein: 30, fat: 20 },
+      macros: blueprints[1].macros,
       meals: [
-        { name: "早餐", icon: "🌅", food: `蒸红薯1根 + 无糖燕麦奶 + 水煮蛋1个`, cals: `${Math.round(planB_Cals * 0.25)} kcal` },
+        { name: "早餐", icon: "🌅", food: `蒸红薯1根 + ${breakfastDrink}1杯 + ${eggItem}`, cals: `${Math.round(planB_Cals * 0.25)} kcal` },
         { name: "午餐", icon: "☀️", food: `${localDishes.lunchB} + 醋溜黄瓜`, cals: `${Math.round(planB_Cals * 0.4)} kcal` },
         { name: "晚餐", icon: "🌙", food: `${localDishes.dinnerB} + 凉拌木耳100g`, cals: `${Math.round(planB_Cals * 0.25)} kcal` },
         { name: "加餐", icon: "🍎", food: `${snackOption.snackB}`, cals: `${Math.round(planB_Cals * 0.1)} kcal` }
@@ -444,7 +993,7 @@ function calculateAndGenerateDietData() {
       ingredients: {
         meat: [
           { name: proteins.proteinB, qty: "150g" },
-          { name: "柴鸡蛋", qty: "1个" }
+          eggIngredient
         ],
         veggies: [
           { name: "水果黄瓜", qty: "200g" },
@@ -467,12 +1016,12 @@ function calculateAndGenerateDietData() {
       }
     },
     {
-      name: "方案 C：地中海慢享低脂食谱",
-      sub: "以富含单不饱和脂肪酸与抗氧化食材为特色",
+      name: blueprints[2].name,
+      sub: blueprints[2].sub,
       calories: planC_Cals,
-      macros: { carbs: 35, protein: 30, fat: 35 },
+      macros: blueprints[2].macros,
       meals: [
-        { name: "早餐", icon: "🌅", food: `全麦切片面包2片 + 圣女果8个 + 低脂酸奶`, cals: `${Math.round(planC_Cals * 0.25)} kcal` },
+        { name: "早餐", icon: "🌅", food: `${breadItem} + 圣女果8个 + ${yogurtItem}`, cals: `${Math.round(planC_Cals * 0.25)} kcal` },
         { name: "午餐", icon: "☀️", food: `${localDishes.lunchC} + 蒜蓉芦笋`, cals: `${Math.round(planC_Cals * 0.4)} kcal` },
         { name: "晚餐", icon: "🌙", food: `${localDishes.dinnerC} + 鲜香菇番茄豆腐汤`, cals: `${Math.round(planC_Cals * 0.25)} kcal` },
         { name: "加餐", icon: "🍎", food: `${snackOption.snackC}`, cals: `${Math.round(planC_Cals * 0.1)} kcal` }
@@ -480,7 +1029,7 @@ function calculateAndGenerateDietData() {
       ingredients: {
         meat: [
           { name: proteins.proteinC, qty: "160g" },
-          { name: "低脂无糖酸奶", qty: "150g" }
+          { name: yogurtItem, qty: "150g" }
         ],
         veggies: [
           { name: "芦笋", qty: "120g" },
@@ -489,7 +1038,7 @@ function calculateAndGenerateDietData() {
           { name: "鲜香菇", qty: "80g" }
         ],
         grains: [
-          { name: "全麦面包", qty: "60g" },
+          { name: avoidGluten ? "藜麦饭团" : "全麦面包", qty: "60g" },
           { name: "藜麦米", qty: "40g" }
         ],
         seasonings: [
@@ -506,8 +1055,165 @@ function calculateAndGenerateDietData() {
   ];
 }
 
+function getPlanBlueprints(goal, dietHabit) {
+  if (dietHabit === "vegan") {
+    return [
+      {
+        name: "方案 A：植物蛋白轻盈膳食",
+        sub: "以豆制品、菌菇和低 GI 主食构成的清爽纯素方案",
+        calorieFactor: goal === "gain-muscle" ? 1.02 : 0.95,
+        macros: { carbs: 38, protein: 32, fat: 30 }
+      },
+      {
+        name: "方案 B：高纤谷豆能量餐",
+        sub: "谷物、豆类与时令蔬菜组合，强调饱腹和稳定能量",
+        calorieFactor: 1,
+        macros: { carbs: 52, protein: 24, fat: 24 }
+      },
+      {
+        name: "方案 C：地中海纯素优脂餐",
+        sub: "橄榄油、坚果替代和番茄类食材提升抗氧化摄入",
+        calorieFactor: 1.04,
+        macros: { carbs: 42, protein: 24, fat: 34 }
+      }
+    ];
+  }
+
+  if (goal === "gain-muscle") {
+    return [
+      {
+        name: "方案 A：高蛋白增肌训练餐",
+        sub: "提高优质蛋白摄入，适合训练日肌肉修复",
+        calorieFactor: 1.05,
+        macros: { carbs: 40, protein: 35, fat: 25 }
+      },
+      {
+        name: "方案 B：复合碳水恢复餐",
+        sub: "用慢糖谷物和高纤蔬菜支持训练后的糖原恢复",
+        calorieFactor: 1,
+        macros: { carbs: 48, protein: 32, fat: 20 }
+      },
+      {
+        name: "方案 C：地中海优脂增肌餐",
+        sub: "用优质脂肪和高密度蛋白提升热量质量",
+        calorieFactor: 1.1,
+        macros: { carbs: 35, protein: 33, fat: 32 }
+      }
+    ];
+  }
+
+  if (goal === "low-gi" || dietHabit === "low-carb") {
+    return [
+      {
+        name: "方案 A：低 GI 稳糖低碳餐",
+        sub: "控制精制碳水，用蛋白和优质脂肪稳定餐后血糖",
+        calorieFactor: 0.95,
+        macros: { carbs: 28, protein: 38, fat: 34 }
+      },
+      {
+        name: "方案 B：高纤慢糖平衡餐",
+        sub: "保留必要复合碳水，提升膳食纤维和饱腹感",
+        calorieFactor: 1,
+        macros: { carbs: 42, protein: 32, fat: 26 }
+      },
+      {
+        name: "方案 C：地中海稳糖轻食",
+        sub: "以番茄、橄榄油和低加工主食构建温和控糖餐",
+        calorieFactor: 1.02,
+        macros: { carbs: 35, protein: 30, fat: 35 }
+      }
+    ];
+  }
+
+  if (dietHabit === "mediterranean") {
+    return [
+      {
+        name: "方案 A：清爽控脂地中海餐",
+        sub: "在热量可控前提下提高鱼禽和蔬菜占比",
+        calorieFactor: 0.96,
+        macros: { carbs: 35, protein: 35, fat: 30 }
+      },
+      {
+        name: "方案 B：高纤谷物地中海餐",
+        sub: "用全谷物和时令果蔬提供稳定饱腹感",
+        calorieFactor: 1,
+        macros: { carbs: 48, protein: 28, fat: 24 }
+      },
+      {
+        name: "方案 C：经典地中海优脂餐",
+        sub: "突出橄榄油、番茄、鱼类和坚果的抗氧化优势",
+        calorieFactor: 1.04,
+        macros: { carbs: 38, protein: 28, fat: 34 }
+      }
+    ];
+  }
+
+  return [
+    {
+      name: "方案 A：轻盈减脂低碳膳食",
+      sub: "专注控制升糖与胰岛素，适合减碳需求",
+      calorieFactor: 0.95,
+      macros: { carbs: 25, protein: 45, fat: 30 }
+    },
+    {
+      name: "方案 B：黄金膳食纤维能量餐",
+      sub: "以复合谷物与高膳食纤维为主，饱腹感强",
+      calorieFactor: 1,
+      macros: { carbs: 50, protein: 30, fat: 20 }
+    },
+    {
+      name: "方案 C：地中海慢享低脂食谱",
+      sub: "以富含单不饱和脂肪酸与抗氧化食材为特色",
+      calorieFactor: 1.05,
+      macros: { carbs: 35, protein: 30, fat: 35 }
+    }
+  ];
+}
+
 // 辅助函数：根据地域和避忌食材确定菜品
-function getLocalDishes(region, allergies) {
+function getLocalDishes(region, allergies, dietHabit = "balanced") {
+  if (dietHabit === "vegan") {
+    switch (region) {
+      case "south":
+        return {
+          lunchA: "香菇豆腐蒸时蔬",
+          dinnerA: "荷塘小炒配鹰嘴豆",
+          lunchB: "百合莲藕炒毛豆",
+          dinnerB: "冬瓜海带豆腐汤",
+          lunchC: "清炖番茄菌菇豆腐",
+          dinnerC: "白灼生菜配藜麦"
+        };
+      case "north":
+        return {
+          lunchA: "孜然杏鲍菇配豆腐",
+          dinnerA: "木耳黄瓜炒素鸡",
+          lunchB: "杂粮饭配番茄鹰嘴豆",
+          dinnerB: "凉拌金针菇黄瓜丝",
+          lunchC: "番茄炖豆腐泡",
+          dinnerC: "素炒西葫芦"
+        };
+      case "sichuan":
+        return {
+          lunchA: "少油干煸杏鲍菇",
+          dinnerA: "椒麻凉拌豆腐丝",
+          lunchB: "鲜椒爆炒素鸡丁",
+          dinnerB: "麻婆豆腐 (少油纯素版)",
+          lunchC: "鲜椒烤豆腐排",
+          dinnerC: "凉拌爽口木耳"
+        };
+      case "western":
+      default:
+        return {
+          lunchA: "柠檬香草煎豆腐排",
+          dinnerA: "番茄牛油果鹰嘴豆沙拉",
+          lunchB: "香草烤菌菇豆排",
+          dinnerB: "羽衣甘蓝藜麦沙拉",
+          lunchC: "香煎豆腐排",
+          dinnerC: "意式番茄豆腐沙拉"
+        };
+    }
+  }
+
   const avoidSeafood = allergies.includes("seafood");
   const avoidBeefPork = allergies.includes("beef-pork");
 
@@ -558,10 +1264,17 @@ function getLocalDishes(region, allergies) {
 }
 
 // 辅助函数：核心蛋白质替换
-function getProteins(allergies) {
+function getProteins(allergies, dietHabit = "balanced") {
+  if (dietHabit === "vegan") {
+    return {
+      proteinA: "北豆腐/素鸡",
+      proteinB: "鹰嘴豆/毛豆",
+      proteinC: "香煎豆腐排"
+    };
+  }
+
   const avoidSeafood = allergies.includes("seafood");
   const avoidBeefPork = allergies.includes("beef-pork");
-  const avoidDairy = allergies.includes("dairy");
 
   return {
     proteinA: "去皮胸鸡肉",
@@ -581,15 +1294,17 @@ function getCarbs(allergies) {
 }
 
 // 辅助函数：加餐及原料替换
-function getSnacks(allergies) {
+function getSnacks(allergies, dietHabit = "balanced") {
   const avoidNuts = allergies.includes("nuts");
   const avoidDairy = allergies.includes("dairy");
+  const veganOrDairyFree = avoidDairy || dietHabit === "vegan";
+
   return {
     snackA: avoidNuts ? "小番茄8个" : "扁桃仁5颗",
     snackB: "苹果半个",
-    snackC: avoidDairy ? "无糖椰子酸奶" : "希腊酸奶1杯",
+    snackC: veganOrDairyFree ? "无糖椰子酸奶" : "希腊酸奶1杯",
     ingA: avoidNuts ? "樱桃番茄" : "熟无盐坚果",
-    ingC: avoidDairy ? "椰子奶" : "低脂酸奶"
+    ingC: veganOrDairyFree ? "椰子奶" : "低脂酸奶"
   };
 }
 
@@ -599,9 +1314,19 @@ function translateGoal(goal) {
     "lose-fat": "健康减脂",
     "gain-muscle": "增肌塑形",
     "balanced": "日常均衡",
-    "low-gi": "控糖控糖"
+    "low-gi": "低 GI 控糖"
   };
   return map[goal] || goal;
+}
+
+function translateActivity(activity) {
+  const map = {
+    "sedentary": "久坐",
+    "light": "轻度活动",
+    "moderate": "中度运动",
+    "heavy": "高强度活动"
+  };
+  return map[activity] || activity;
 }
 
 function translateHabit(habit) {
@@ -635,8 +1360,59 @@ function translateRegion(region) {
   return map[region] || region;
 }
 
+function getBmiStatus(bmi) {
+  if (bmi < 18.5) return "偏轻";
+  if (bmi < 24) return "标准";
+  if (bmi < 28) return "超重";
+  return "肥胖风险";
+}
+
+function renderProfileSummary() {
+  const container = document.getElementById("profileSummary");
+  if (!container || !state.formData.age) return;
+
+  const f = state.formData;
+  const bmi = f.weight / Math.pow(f.height / 100, 2);
+  const allergyText = f.allergies.length > 0
+    ? f.allergies.map(translateAllergy).join("、")
+    : "无";
+
+  const profileItems = [
+    {
+      label: "用户画像",
+      value: `${f.age}岁 / ${f.gender === "male" ? "男" : "女"} / BMI ${bmi.toFixed(1)}`,
+      meta: `体型评估：${getBmiStatus(bmi)}`
+    },
+    {
+      label: "能量模型",
+      value: `${state.targetCalories} kcal`,
+      meta: `BMR ${state.bmr} kcal / TDEE ${state.tdee} kcal`
+    },
+    {
+      label: "目标与活动",
+      value: translateGoal(f.goal),
+      meta: `${translateActivity(f.activity)} / ${translateHabit(f.dietHabit)}`
+    },
+    {
+      label: "偏好约束",
+      value: translateRegion(f.region),
+      meta: `避忌：${allergyText}`
+    }
+  ];
+
+  container.innerHTML = profileItems.map(item => `
+    <article class="profile-summary-card">
+      <span class="profile-summary-label">${item.label}</span>
+      <strong>${item.value}</strong>
+      <small>${item.meta}</small>
+    </article>
+  `).join("");
+}
+
 // 步骤 2：渲染饮食方案
 function renderDietPlans() {
+  renderProfileSummary();
+
   const container = document.getElementById("plansSelectorTabs");
   container.innerHTML = "";
   
@@ -666,9 +1442,15 @@ function renderDietPlans() {
 // 显示所选方案的三餐与营养配比图表
 function showPlanDetails(idx) {
   const plan = state.plans[idx];
+  if (!plan) return;
   
   // 1. 三餐渲染
   const mealsContainer = document.getElementById("mealsListContainer");
+  const totalKcal = document.getElementById("totalKcalVal");
+  const chartSvg = document.getElementById("macroPieChart");
+  const legend = document.getElementById("macroLegend");
+  if (!mealsContainer || !totalKcal || !chartSvg || !legend) return;
+
   mealsContainer.innerHTML = "";
   
   plan.meals.forEach(meal => {
@@ -686,7 +1468,7 @@ function showPlanDetails(idx) {
   });
 
   // 2. 更新能量总值
-  document.getElementById("totalKcalVal").innerText = plan.calories;
+  totalKcal.innerText = plan.calories;
 
   // 3. SVG 饼图扇形计算绘制
   const carbsPct = plan.macros.carbs;
@@ -699,7 +1481,6 @@ function showPlanDetails(idx) {
   const strokeProt = (protPct / 100) * circumference;
   const strokeFat = (fatPct / 100) * circumference;
 
-  const chartSvg = document.getElementById("macroPieChart");
   chartSvg.innerHTML = `
     <!-- 底轨 -->
     <circle cx="50" cy="50" r="40" fill="transparent" stroke="#1f2937" stroke-width="12"></circle>
@@ -727,7 +1508,6 @@ function showPlanDetails(idx) {
   `;
 
   // 4. 更新右侧营养指标图例
-  const legend = document.getElementById("macroLegend");
   legend.innerHTML = `
     <div class="macro-item" data-macro="carbs">
       <div><span class="macro-color"></span>碳水化合物 (${carbsPct}%)</div>
@@ -748,10 +1528,14 @@ function showPlanDetails(idx) {
 function renderIngredients() {
   const activePlan = state.plans[state.activePlanIndex];
   const container = document.getElementById("ingredientsAccordion");
+  if (!activePlan || !container) return;
+
   container.innerHTML = "";
 
-  document.getElementById("ingredientTipText").innerText = 
-    `以下是食材助理为方案【${activePlan.name}】规划的食材清单（已自动替换过敏食材并在适宜的夏季时令期）：`;
+  const tipText = document.getElementById("ingredientTipText");
+  if (tipText) {
+    tipText.innerText = `以下是食材助理为方案【${activePlan.name}】规划的食材清单（已自动替换过敏食材并在适宜的夏季时令期）：`;
+  }
 
   const categoryHeaders = {
     meat: "🥩 肉蛋奶类 (蛋白质源)",
@@ -817,8 +1601,167 @@ function renderIngredients() {
   });
 }
 
+function clampScore(value) {
+  return Math.max(0, Math.min(100, Math.round(value)));
+}
+
+function buildProviderReview(provider) {
+  const goal = state.formData.goal || "balanced";
+  const idealMacros = goal === "gain-muscle"
+    ? { carbs: 42, protein: 34, fat: 24 }
+    : goal === "low-gi"
+      ? { carbs: 32, protein: 36, fat: 32 }
+      : { carbs: 42, protein: 32, fat: 26 };
+
+  const planScores = state.plans.map((plan, idx) => {
+    const macroFit = clampScore(
+      100
+      - Math.abs(plan.macros.carbs - idealMacros.carbs) * 0.8
+      - Math.abs(plan.macros.protein - idealMacros.protein) * 1.1
+      - Math.abs(plan.macros.fat - idealMacros.fat) * 0.7
+    );
+    const executionFit = clampScore((plan.scores.cost * 0.45) + (plan.scores.season * 0.35) + (plan.scores.region * 0.2));
+
+    let score = 0;
+    if (provider.id === "doubao") {
+      score = (plan.scores.region * 0.32) + (plan.scores.season * 0.26) + (executionFit * 0.24) + (macroFit * 0.18);
+    } else if (provider.id === "qianwen") {
+      score = (macroFit * 0.36) + (plan.scores.region * 0.24) + (plan.scores.season * 0.22) + (plan.scores.cost * 0.18);
+    } else {
+      score = (plan.scores.cost * 0.3) + (macroFit * 0.3) + (plan.scores.season * 0.22) + (plan.scores.region * 0.18);
+    }
+
+    return {
+      idx,
+      planName: plan.name,
+      score: clampScore(score),
+      macroFit,
+      executionFit
+    };
+  });
+
+  const best = planScores.reduce((winner, current) => current.score > winner.score ? current : winner, planScores[0]);
+  const noteMap = {
+    doubao: `更偏向用户可执行性和地域口味，倾向推荐「${best.planName}」。`,
+    qianwen: `更重视宏量营养结构和中文解释一致性，倾向推荐「${best.planName}」。`,
+    deepseek: `更偏向量化约束、成本和分数稳定性，倾向推荐「${best.planName}」。`
+  };
+
+  return {
+    providerId: provider.id,
+    providerName: provider.name,
+    role: provider.role,
+    latency: provider.latency,
+    planScores,
+    note: noteMap[provider.id]
+  };
+}
+
+function runAiDebateForPlans() {
+  if (!state.plans.length) return;
+
+  renderAiDebate(true);
+
+  const reviewCalls = architectureRegistry.cloudProviders.map(provider => {
+    return apiSwitch.request("/api/v1/cloud/providers/review", {
+      provider: provider.id,
+      plans: state.plans.map(plan => ({
+        name: plan.name,
+        macros: plan.macros,
+        scores: plan.scores
+      }))
+    }, {
+      source: "evaluation-engine",
+      target: `cloud-${provider.id}`,
+      latency: provider.latency
+    }).then(() => buildProviderReview(provider));
+  });
+
+  Promise.all(reviewCalls).then(reviews => {
+    state.aiDebate.reviews = reviews;
+    state.aiDebate.consensus = state.plans.map((plan, idx) => {
+      const score = reviews.reduce((sum, review) => {
+        return sum + (review.planScores.find(item => item.idx === idx)?.score || 0);
+      }, 0) / reviews.length;
+
+      return {
+        idx,
+        name: plan.name,
+        score: clampScore(score)
+      };
+    });
+
+    saveDataRecord("evaluation.aiDebate", state.aiDebate);
+    renderAiDebate();
+    evaluatePlansRealtime();
+    enqueueLog("eval", "三家云端 AI Provider 对抗评审完成，Switch 已汇总共识分并回写评估面板。");
+  });
+}
+
+function renderAiDebate(isLoading = false) {
+  const container = document.getElementById("aiDebateContainer");
+  if (!container) return;
+
+  if (isLoading) {
+    container.innerHTML = architectureRegistry.cloudProviders.map(provider => `
+      <article class="ai-review-card">
+        <div class="ai-review-head">
+          <div>
+            <div class="ai-review-name">${provider.name}</div>
+            <div class="ai-review-role">${provider.role}</div>
+          </div>
+          <div class="ai-review-latency">pending</div>
+        </div>
+        <div class="ai-review-note">正在通过 API Switch 调用 ${provider.shortName} Provider...</div>
+      </article>
+    `).join("");
+    return;
+  }
+
+  if (!state.aiDebate.reviews.length) {
+    container.innerHTML = `
+      <article class="ai-review-card">
+        <div class="ai-review-name">等待评估阶段</div>
+        <div class="ai-review-note">进入方案评估后，豆包、千问、DeepSeek 会分别给出对抗评分。</div>
+      </article>
+    `;
+    return;
+  }
+
+  container.innerHTML = state.aiDebate.reviews.map(review => `
+    <article class="ai-review-card">
+      <div class="ai-review-head">
+        <div>
+          <div class="ai-review-name">${review.providerName}</div>
+          <div class="ai-review-role">${review.role}</div>
+        </div>
+        <div class="ai-review-latency">${review.latency}ms</div>
+      </div>
+      <div class="debate-plan-list">
+        ${review.planScores.map(item => `
+          <div class="debate-plan-row">
+            <span>${item.planName}</span>
+            <span class="debate-score">${item.score}</span>
+            <div class="debate-bar-bg">
+              <div class="debate-bar-fill" style="width: ${item.score}%;"></div>
+            </div>
+          </div>
+        `).join("")}
+      </div>
+      <div class="ai-review-note">${review.note}</div>
+    </article>
+  `).join("");
+}
+
+function getConsensusScoreForPlan(idx) {
+  const consensus = state.aiDebate.consensus.find(item => item.idx === idx);
+  return consensus ? consensus.score : null;
+}
+
 // 步骤 4：实时加权打分与胜出方案推荐 (评估助理的核心功能)
 function evaluatePlansRealtime() {
+  if (!state.plans.length) return;
+
   const costWeight = state.weights.cost / 100;
   const seasonWeight = state.weights.season / 100;
   const regionWeight = state.weights.region / 100;
@@ -830,13 +1773,17 @@ function evaluatePlansRealtime() {
 
   state.plans.forEach((plan, idx) => {
     // 归一化综合评分
-    const finalScore = Math.round(
+    const ruleScore = Math.round(
       (plan.scores.cost * costWeight) +
       (plan.scores.season * seasonWeight) +
       (plan.scores.region * regionWeight)
     );
+    const consensusScore = getConsensusScoreForPlan(idx);
+    const finalScore = consensusScore === null
+      ? ruleScore
+      : Math.round((ruleScore * 0.86) + (consensusScore * 0.14));
 
-    scoresOutput.push({ idx, name: plan.name, score: finalScore });
+    scoresOutput.push({ idx, name: plan.name, score: finalScore, ruleScore, consensusScore });
 
     if (finalScore > maxScore) {
       maxScore = finalScore;
@@ -848,6 +1795,9 @@ function evaluatePlansRealtime() {
 
   // 渲染对比面板
   const listContainer = document.getElementById("scoresComparisonContainer");
+  const winnerBanner = document.getElementById("winnerBannerContainer");
+  if (!listContainer || !winnerBanner) return;
+
   listContainer.innerHTML = "";
 
   scoresOutput.forEach(item => {
@@ -862,6 +1812,9 @@ function evaluatePlansRealtime() {
         </div>
         <div class="score-row-num">${item.score} 分</div>
       </div>
+      <div class="metric-value">
+        规则分 ${item.ruleScore} ${item.consensusScore === null ? "· 等待 AI 对抗分" : `· AI 共识分 ${item.consensusScore}`}
+      </div>
       <div class="score-bar-bg">
         <div class="score-bar-fill" style="width: ${item.score}%;"></div>
       </div>
@@ -870,24 +1823,32 @@ function evaluatePlansRealtime() {
   });
 
   // 渲染最终推荐横幅
-  const winnerBanner = document.getElementById("winnerBannerContainer");
   const winnerPlan = state.plans[winnerIndex];
+  const winnerConsensus = getConsensusScoreForPlan(winnerIndex);
   winnerBanner.innerHTML = `
     <div class="winner-banner-icon">🏆</div>
     <div>
       <div style="font-weight: 700; color: #10B981; margin-bottom: 0.15rem;">评估助理自动选定方案：${winnerPlan.name}</div>
       <div style="color: var(--text-secondary); line-height: 1.4;">
         在您当前的评估指标下，该方案表现最优。时令匹配度为 ${winnerPlan.scores.season}%，
-        地域风味匹配度为 ${winnerPlan.scores.region}%，能够最大程度满足预算与适宜性。
+        地域风味匹配度为 ${winnerPlan.scores.region}%${winnerConsensus === null ? "" : `，多 AI 共识分为 ${winnerConsensus} 分`}，能够最大程度满足预算与适宜性。
       </div>
     </div>
   `;
+
+  saveDataRecord("evaluation.current", {
+    weights: state.weights,
+    selectedPlanIndex: state.selectedPlanIndex,
+    selectedPlanName: winnerPlan.name,
+    scores: scoresOutput
+  });
 }
 
 // 步骤 5：营销文案生成引擎 (自适应用户指标和方案结果)
 function generateMarketingTexts() {
   const winnerPlan = state.plans[state.selectedPlanIndex];
   const f = state.formData;
+  if (!winnerPlan || !f.age) return;
 
   const templateParams = {
     PlanName: winnerPlan.name,
@@ -983,12 +1944,23 @@ function generateMarketingTexts() {
 食材助理根据方案生成了分类食材清单，并给出了针对夏季的高温防霉、储鲜防潮指南，确保食材新鲜度的同时也减少了食物浪费。
 
 结语：
-科学饮食不是折磨，而是一场身体的重塑。通过多智能体协同，我们能让繁琐的营养计算、食材采购和成本评估变得触手可及。欢迎转发分享这套食谱给有需要的朋友！`;
+  科学饮食不是折磨，而是一场身体的重塑。通过多智能体协同，我们能让繁琐的营养计算、食材采购和成本评估变得触手可及。欢迎转发分享这套食谱给有需要的朋友！`;
 
   // 填入 DOM 中
-  document.getElementById("copyBoxXhs").innerText = xhsText;
-  document.getElementById("copyBoxVideo").innerText = videoText;
-  document.getElementById("copyBoxGzh").innerText = gzhText;
+  const xhsBox = document.getElementById("copyBoxXhs");
+  const videoBox = document.getElementById("copyBoxVideo");
+  const gzhBox = document.getElementById("copyBoxGzh");
+
+  if (xhsBox) xhsBox.innerText = xhsText;
+  if (videoBox) videoBox.innerText = videoText;
+  if (gzhBox) gzhBox.innerText = gzhText;
+
+  saveDataRecord("marketing.current", {
+    selectedPlan: winnerPlan.name,
+    xhsText,
+    videoText,
+    gzhText
+  });
 }
 
 // 模拟实时协同控制台日志输出 (增加异步和排队打印功能，更具动感)
@@ -1011,6 +1983,8 @@ function addSystemLog(tag, message) {
     case "ingredient": tagClass = "ingredient"; tagLabel = "食材助理"; break;
     case "eval": tagClass = "eval"; tagLabel = "评估助理"; break;
     case "market": tagClass = "market"; tagLabel = "营销助理"; break;
+    case "switch": tagClass = "switch"; tagLabel = "API Switch"; break;
+    case "data": tagClass = "data"; tagLabel = "数据层"; break;
   }
 
   entry.innerHTML = `
@@ -1060,9 +2034,26 @@ function startVideoRecording() {
   const progressContainer = document.getElementById("videoProgressContainer");
   const progressBar = document.getElementById("videoProgressBar");
   const progressText = document.getElementById("videoProgressText");
+  const selectedPlan = state.plans[state.selectedPlanIndex];
+
+  if (!btn || !progressContainer || !progressBar || !progressText) return;
+  if (!selectedPlan) {
+    addSystemLog("market", "未找到最终方案，无法生成宣传视频。请先完成方案评估。");
+    return;
+  }
 
   recordingCanvas = document.getElementById("videoCanvas");
+  if (!recordingCanvas || !recordingCanvas.getContext || !recordingCanvas.captureStream || typeof MediaRecorder === "undefined") {
+    addSystemLog("market", "当前浏览器不支持 Canvas 录制或 MediaRecorder，无法生成 WebM 视频。");
+    alert("当前浏览器不支持视频录制，请使用最新版 Chrome、Edge 或 Safari 重试。");
+    return;
+  }
+
   canvasCtx = recordingCanvas.getContext("2d");
+  if (!canvasCtx) {
+    addSystemLog("market", "Canvas 2D 上下文初始化失败，已取消视频生成。");
+    return;
+  }
 
   btn.disabled = true;
   btn.innerText = "🎬 视频生成录制中...";
@@ -1086,7 +2077,15 @@ function startVideoRecording() {
     options = { mimeType: 'video/webm' };
   }
 
-  mediaRecorder = new MediaRecorder(stream, options);
+  try {
+    mediaRecorder = new MediaRecorder(stream, options);
+  } catch (err) {
+    btn.disabled = false;
+    btn.innerText = "🎬 1. 生成并录制宣传视频";
+    progressContainer.style.display = "none";
+    addSystemLog("market", `视频录制初始化失败：${err.message}`);
+    return;
+  }
   
   mediaRecorder.ondataavailable = (e) => {
     if (e.data && e.data.size > 0) {
@@ -1162,7 +2161,7 @@ function startVideoRecording() {
     }
 
     // 获取当前选定的饮食方案
-    const activePlan = state.plans[state.selectedPlanIndex];
+    const activePlan = selectedPlan;
 
     // 绘制正文卡片背景 (毛玻璃模拟)
     canvasCtx.fillStyle = 'rgba(15, 23, 42, 0.8)';
@@ -1233,16 +2232,27 @@ function drawRoundRect(ctx, x, y, width, height, radius) {
 // 生成并下载本地机器人发布所需的 publish_data.json
 function downloadPublishPackage() {
   const activePlan = state.plans[state.selectedPlanIndex];
+  if (!activePlan) {
+    addSystemLog("market", "未找到最终方案，无法导出发布包。");
+    return;
+  }
   
   // 生成抖音定制文案
   const dyText = `🎬 多智能体协同定制的【${activePlan.name}】公开！每日摄入 ${activePlan.calories} 千卡，营养素配比精细，非常科学！#健康减脂 #小红书爆款食谱 #AI智能体 #控糖低卡 #夏季瘦身 #自律打卡`;
   
+  const xhsBox = document.getElementById("copyBoxXhs");
   const data = {
     plan_name: activePlan.name,
     calories: activePlan.calories,
-    xhs_text: document.getElementById("copyBoxXhs").innerText,
+    xhs_text: xhsBox ? xhsBox.innerText : "",
     video_desc: dyText
   };
+
+  apiSwitch.request("/api/v1/publish/package", data, {
+    source: "marketing-writer",
+    target: "publish-bot"
+  });
+  saveDataRecord("publish.package", data);
 
   const jsonStr = JSON.stringify(data, null, 2);
   const blob = new Blob([jsonStr], { type: 'application/json' });

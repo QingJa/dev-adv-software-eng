@@ -18,6 +18,9 @@
           <h1>健康饮食规划系统</h1>
           <span>Multi-Agent System</span>
         </div>
+        <button class="theme-toggle" type="button" id="themeToggle" aria-label="切换明暗主题" title="切换明暗主题">
+          <span id="themeToggleIcon">☀</span>
+        </button>
       </div>
       
       <div class="agent-list">
@@ -66,6 +69,19 @@
           </div>
         </div>
       </div>
+
+      <section class="sidebar-architecture-panel" aria-label="七层架构状态">
+        <div class="sidebar-section-title">七层实现状态</div>
+        <div class="layer-status-list" id="layerStatusList">
+          <div class="layer-status-item">L1 云端 AI：豆包 / 千问 / DeepSeek</div>
+          <div class="layer-status-item">L2 数据层：缓存 + 持久化</div>
+          <div class="layer-status-item">L3 业务层：容器 / 多 API / AI 对抗</div>
+          <div class="layer-status-item">L4 API 层：通用协议信封</div>
+          <div class="layer-status-item">L5 Switch：全双工异步调度</div>
+          <div class="layer-status-item">L6 UI：MVC + MVVM + 3D 栈</div>
+          <div class="layer-status-item">L7 端边：浏览器端侧算力</div>
+        </div>
+      </section>
     </aside>
     
     <!-- 主工作区 -->
@@ -79,6 +95,50 @@
           <div class="progress-bar-fill" id="progressBar"></div>
         </div>
       </div>
+
+      <section class="architecture-runtime-panel" aria-label="七层架构运行态">
+        <div class="runtime-header">
+          <div>
+            <h2>七层架构运行态</h2>
+            <span>云端 AI、数据层、业务容器、通用 API、Switch、UI 和端边算力统一可视化</span>
+          </div>
+          <div class="protocol-badge" id="protocolBadge">FastAPI Style /api/v1</div>
+        </div>
+
+        <div class="architecture-runtime-grid">
+          <div class="architecture-stack-3d" id="architectureStack3d" aria-label="3D 架构栈">
+            <div class="architecture-layer" data-layer="1">L1 云端平台：豆包 / 千问 / DS</div>
+            <div class="architecture-layer" data-layer="2">L2 数据层：Cache + Persistence</div>
+            <div class="architecture-layer" data-layer="3">L3 业务层：容器化 Agent + AI 对抗</div>
+            <div class="architecture-layer" data-layer="4">L4 API 层：通用协议</div>
+            <div class="architecture-layer" data-layer="5">L5 API Switch：全双工异步非阻塞</div>
+            <div class="architecture-layer" data-layer="6">L6 UI：MVC / MVVM</div>
+            <div class="architecture-layer" data-layer="7">L7 端边算力：浏览器本地推理</div>
+          </div>
+
+          <div class="runtime-metrics-grid">
+            <section class="runtime-card">
+              <div class="runtime-card-title">云端 AI 平台</div>
+              <div class="cloud-provider-grid" id="cloudProviderGrid"></div>
+            </section>
+
+            <section class="runtime-card">
+              <div class="runtime-card-title">API Switch 总调度</div>
+              <div class="api-switch-metrics" id="apiSwitchMetrics"></div>
+            </section>
+
+            <section class="runtime-card">
+              <div class="runtime-card-title">双层数据状态</div>
+              <div class="data-layer-status" id="dataLayerStatus"></div>
+            </section>
+
+            <section class="runtime-card">
+              <div class="runtime-card-title">端侧 / 边侧算力</div>
+              <div class="edge-compute-status" id="edgeComputeStatus"></div>
+            </section>
+          </div>
+        </div>
+      </section>
       
       <!-- 步骤 1：客户经理问卷收集 -->
       <section class="step-view active" id="step-1">
@@ -235,6 +295,10 @@
             <h2 class="panel-title">🍏 饮食助理：多套膳食规划生成</h2>
             <span style="font-size: 0.8rem; color: var(--text-muted);">识别饮食偏好，生成饮食规划，提供多个方案</span>
           </div>
+
+          <div class="profile-summary-grid" id="profileSummary" aria-live="polite">
+            <!-- 客户经理用户画像摘要 -->
+          </div>
           
           <div class="plans-wrapper">
             <!-- 方案快捷选择标签 -->
@@ -358,6 +422,16 @@
               </div>
             </div>
           </div>
+
+          <section class="ai-debate-panel" aria-label="多 AI 对抗评审">
+            <div class="ai-debate-header">
+              <h3>多 AI 对抗评审</h3>
+              <span>豆包、千问、DeepSeek 对同一组方案进行独立评审，再由 Switch 汇总共识分</span>
+            </div>
+            <div class="ai-debate-grid" id="aiDebateContainer">
+              <!-- 动态渲染三家云端 AI 对抗评分 -->
+            </div>
+          </section>
           
           <div class="navigation-bar">
             <button class="nav-btn prev-step-btn" data-prev="3">◀ 上一步</button>
