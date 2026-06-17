@@ -317,6 +317,45 @@
 | P2 | Web Worker/WASM 端侧算力 | 未开始；BMI/BMR/TDEE 仍在主线程。 |
 | P2 | Playwright E2E | 未开始；尚未增加自动流程测试和截图验收。 |
 
+## 当前实现状态总览
+
+更新时间：2026-06-17
+
+### 已实现
+
+| 模块 | 当前实现 |
+| --- | --- |
+| 克隆即用 | 已新增 `README.md`、`.env.example`、`.gitignore`、`backend/requirements.txt`、`docker-compose.yml`，别人克隆后可按 README 创建虚拟环境并启动。 |
+| 前端业务流程 | 已实现基础健康问卷、结构化用户画像、3 套膳食方案、分类食材采购清单、量化评估、最终推荐、多平台推广文案和发布包导出。 |
+| 功能化 UI | 已移除直接展示的七层架构、角色卡、Provider 状态、API Switch 面板和 3D 架构栈；页面只展示业务功能与结果。 |
+| 后端 API | 已实现 FastAPI 后端，支持 `/api/v1/health`、`/api/v1/switch/dispatch`、`/api/v1/switch/stats`、`/api/v1/events`、`/api/v1/events/stream`。 |
+| 静态入口 | 已支持 `GET /`、`GET /style.css`、`GET /app.js`，可直接访问 `http://127.0.0.1:8000/` 使用完整页面。 |
+| 统一协议 | 已用 `ApiEnvelope`、`ApiResponse`、`ApiEvent` 定义统一请求、响应和事件结构。 |
+| API Switch | 已实现后端 `ApiSwitch`，统一路由画像、膳食、食材、评估、Provider 复核、营销和发布包请求。 |
+| 真实 Provider | 已实现豆包 Doubao、通义千问 Qianwen、DeepSeek 适配层；支持真实 API 调用、JSON 评分解析、失败降级。 |
+| 本地密钥管理 | 已通过 ignored `.env` 保存本机真实 key；仓库只提交 `.env.example`，不提交真实密钥。 |
+| 数据层 | 前端保留 `Map` 热缓存与 `localStorage` 快照；后端已实现 SQLite `records` 和 `api_events` 表。 |
+| 实时事件 | 后端已提供 SSE 事件流；前端会在后端在线时订阅实时处理事件。 |
+| 本地计算 | 前端已计算 BMI、BMR、TDEE，并将结果用于膳食目标和后续流程。 |
+| 容器化文件 | 已新增 `backend/Dockerfile` 与 `docker-compose.yml`，可用于构建后端服务。 |
+| 文档记录 | 已更新 `README.md`、`backend/README.md`、`modification_details.md` 和本计划文件。 |
+| 已提交 | 已创建提交 `8425c12 Implement clone-ready diet planner backend`，提交内容不包含真实 API key。 |
+
+### 暂未实现 / 后续增强
+
+| 优先级 | 未实现项 | 说明 |
+| --- | --- | --- |
+| P0 | 真实 key 分发 | 仓库不能提交真实 key；他人克隆后必须自行复制 `.env.example` 为 `.env` 并填写自己的 key。 |
+| P1 | Docker build/up 实测 | 已提供 Dockerfile 和 Compose，但尚未在当前环境完成 `docker compose up --build` 实测。 |
+| P1 | Redis 热缓存 | 当前后端持久化为 SQLite，前端有 Map/localStorage；尚未加入 Redis 服务。 |
+| P1 | 生产数据库 | 尚未接入 Postgres/MySQL，也未做数据迁移、备份恢复、用户隔离和加密存储。 |
+| P1 | Provider 生产治理 | 已有失败降级，但尚未实现完整费用统计、配额限流、熔断、重试策略、内容安全和审计。 |
+| P1 | 流式响应 | 当前 Provider 复核为普通同步请求；尚未实现流式生成和前端逐段展示。 |
+| P2 | Web Worker/WASM/WebGPU | BMI/BMR/TDEE 仍在主线程；尚未迁入 Worker 或端侧推理运行时。 |
+| P2 | Playwright E2E | 尚未增加自动端到端测试、截图验收、移动端视觉回归和无障碍审计。 |
+| P2 | CI/CD | 尚未配置 GitHub Actions 或其他 CI 来自动运行语法检查、后端测试和前端 smoke test。 |
+| P2 | 多用户与鉴权 | 当前是本地演示/课程项目形态；尚未实现登录、权限、用户级数据隔离和 API 鉴权。 |
+
 ## 2026-06-17 功能化整改补充
 
 根据最新要求，已将“七层”和“五个助理”从页面直接展示改为内部功能链路：

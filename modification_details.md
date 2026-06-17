@@ -421,3 +421,42 @@ GET /app.js -> 200 text/javascript
 ```text
 七层架构运行态 / 七层实现状态 / 客户经理 / 饮食助理 / 食材助理 / 评估助理 / 营销助理 / API Switch / 豆包 / 千问 / DeepSeek / Provider
 ```
+
+## 当前已实现与暂未实现
+
+更新时间：2026-06-17
+
+### 已实现
+
+| 类别 | 已完成内容 |
+| --- | --- |
+| 克隆使用 | 已提交 `README.md`、`.env.example`、`.gitignore`、后端依赖和 Docker/Compose 文件，别人克隆后可按 README 启动。 |
+| 前端业务功能 | 已完成基础健康问卷、结构化用户画像、3 套饮食方案、分类采购清单、量化评估、最终推荐、营销文案、视频脚本和发布包导出。 |
+| UI 口径 | 已将“七层”和“五个助理”改为内部功能链路，页面不再直接展示架构层级、角色卡、Provider 状态或 API Switch 面板。 |
+| 后端服务 | 已新增 FastAPI 后端，包含 health、switch dispatch、stats、events、SSE stream 和根路径静态页面。 |
+| 静态资源 | 已新增 `/style.css` 和 `/app.js` 路由，修复通过 `http://127.0.0.1:8000/` 打开时 CSS/JS 404 的问题。 |
+| API 协议 | 已实现统一 API envelope、response 和 event schema。 |
+| Switch 调度 | 已实现后端 API Switch，统一调度画像、膳食、食材、评估、Provider 复核、营销和发布包路由。 |
+| 真实模型 | 已实现豆包、千问、DeepSeek 后端 Provider 适配，支持真实 HTTP 调用、评分解析和失败降级。 |
+| 本地密钥 | 真实 key 只写入 ignored `.env`；提交中只包含 `.env.example`，已做密钥扫描。 |
+| 数据存储 | 前端有 Map/localStorage；后端有 SQLite `records` 和 `api_events`。 |
+| 实时事件 | 后端 SSE 已实现，前端后端在线时会订阅处理事件。 |
+| 本地计算 | 已在浏览器计算 BMI、BMR、TDEE 并参与方案生成。 |
+| 容器化 | 已新增 `backend/Dockerfile` 和 `docker-compose.yml`。 |
+| 验证 | 已通过 Python 编译、JS 语法、diff 空白、静态入口 200、真实 Provider smoke test 和提交密钥扫描。 |
+| Git 提交 | 已提交 `8425c12 Implement clone-ready diet planner backend`。 |
+
+### 暂未实现
+
+| 优先级 | 暂未实现内容 | 说明 |
+| --- | --- | --- |
+| P0 | 他人真实 key 自动可用 | 不会也不应提交真实 key；克隆者需要自己复制 `.env.example` 为 `.env` 并填写 key。 |
+| P1 | Docker 真实构建验证 | Compose 文件已提交，但尚未在当前环境实际执行 `docker compose up --build` 验证。 |
+| P1 | Redis 热缓存 | 当前后端只有 SQLite，前端有 Map/localStorage；尚未接 Redis。 |
+| P1 | 生产级数据库 | 尚未接 Postgres/MySQL，缺少迁移、加密、备份、用户隔离。 |
+| P1 | Provider 治理 | 尚未完成费用统计、配额限流、熔断、重试策略、内容安全审计。 |
+| P1 | 流式响应 | 当前复核请求为普通同步请求，未实现模型流式输出。 |
+| P2 | Web Worker/WASM/WebGPU | 本地计算仍在主线程，尚未迁移到 Worker 或端侧推理运行时。 |
+| P2 | Playwright E2E | 尚未添加完整端到端流程、截图验收、移动端视觉回归和无障碍审计。 |
+| P2 | CI/CD | 尚未配置自动化流水线。 |
+| P2 | 多用户与鉴权 | 当前适合本地演示/课程项目，尚未实现登录、权限和用户级数据隔离。 |
