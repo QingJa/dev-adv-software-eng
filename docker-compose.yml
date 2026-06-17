@@ -1,0 +1,29 @@
+services:
+  backend:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    ports:
+      - "8000:8000"
+    environment:
+      DIET_PLANNER_DB: /data/diet_planner.db
+      CORS_ALLOW_ORIGINS: "*"
+      DOUBAO_API_KEY: ${DOUBAO_API_KEY:-}
+      DOUBAO_API_URL: ${DOUBAO_API_URL:-https://ark.cn-beijing.volces.com/api/v3/responses}
+      DOUBAO_MODEL: ${DOUBAO_MODEL:-doubao-seed-2-0-lite-260428}
+      QIANWEN_API_KEY: ${QIANWEN_API_KEY:-}
+      QIANWEN_API_URL: ${QIANWEN_API_URL:-https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions}
+      QIANWEN_MODEL: ${QIANWEN_MODEL:-qwen-plus}
+      DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-}
+      DEEPSEEK_API_URL: ${DEEPSEEK_API_URL:-https://api.deepseek.com/chat/completions}
+      DEEPSEEK_MODEL: ${DEEPSEEK_MODEL:-deepseek-chat}
+    volumes:
+      - diet-planner-data:/data
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/v1/health')"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+volumes:
+  diet-planner-data:

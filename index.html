@@ -3,85 +3,25 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>多智能体协同健康饮食规划系统</title>
+  <title>个性化健康饮食规划系统</title>
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
 
   <div class="app-container">
     
-    <!-- 侧边栏：多智能体拓扑与导航 -->
+    <!-- 侧边栏：品牌与主题控制 -->
     <aside class="sidebar">
       <div class="logo-section">
         <div class="logo-icon">🥗</div>
         <div class="logo-text">
           <h1>健康饮食规划系统</h1>
-          <span>Multi-Agent System</span>
+          <span>Personalized Diet Planner</span>
         </div>
         <button class="theme-toggle" type="button" id="themeToggle" aria-label="切换明暗主题" title="切换明暗主题">
           <span id="themeToggleIcon">☀</span>
         </button>
       </div>
-      
-      <div class="agent-list">
-        <!-- 客户经理 -->
-        <div class="agent-card active" data-agent="client" id="agent-client">
-          <div class="agent-avatar">👤</div>
-          <div class="agent-info">
-            <div class="agent-name">客户经理 <span class="agent-status-dot"></span></div>
-            <div class="agent-role">收集用户画像与健康诉求</div>
-          </div>
-        </div>
-        
-        <!-- 饮食助理 -->
-        <div class="agent-card" data-agent="diet" id="agent-diet">
-          <div class="agent-avatar">🍏</div>
-          <div class="agent-info">
-            <div class="agent-name">饮食助理 <span class="agent-status-dot"></span></div>
-            <div class="agent-role">智能热量计算与方案定制</div>
-          </div>
-        </div>
-        
-        <!-- 食材助理 -->
-        <div class="agent-card" data-agent="ingredient" id="agent-ingredient">
-          <div class="agent-avatar">🛒</div>
-          <div class="agent-info">
-            <div class="agent-name">食材助理 <span class="agent-status-dot"></span></div>
-            <div class="agent-role">食材用量清单与存储建议</div>
-          </div>
-        </div>
-        
-        <!-- 评估助理 -->
-        <div class="agent-card" data-agent="eval" id="agent-eval">
-          <div class="agent-avatar">📊</div>
-          <div class="agent-info">
-            <div class="agent-name">评估助理 <span class="agent-status-dot"></span></div>
-            <div class="agent-role">成本/地域/季节多维评估</div>
-          </div>
-        </div>
-        
-        <!-- 营销助理 -->
-        <div class="agent-card" data-agent="market" id="agent-market">
-          <div class="agent-avatar">📣</div>
-          <div class="agent-info">
-            <div class="agent-name">营销助理 <span class="agent-status-dot"></span></div>
-            <div class="agent-role">健康食谱推广与社交裂变</div>
-          </div>
-        </div>
-      </div>
-
-      <section class="sidebar-architecture-panel" aria-label="七层架构状态">
-        <div class="sidebar-section-title">七层实现状态</div>
-        <div class="layer-status-list" id="layerStatusList">
-          <div class="layer-status-item">L1 云端 AI：豆包 / 千问 / DeepSeek</div>
-          <div class="layer-status-item">L2 数据层：缓存 + 持久化</div>
-          <div class="layer-status-item">L3 业务层：容器 / 多 API / AI 对抗</div>
-          <div class="layer-status-item">L4 API 层：通用协议信封</div>
-          <div class="layer-status-item">L5 Switch：全双工异步调度</div>
-          <div class="layer-status-item">L6 UI：MVC + MVVM + 3D 栈</div>
-          <div class="layer-status-item">L7 端边：浏览器端侧算力</div>
-        </div>
-      </section>
     </aside>
     
     <!-- 主工作区 -->
@@ -89,63 +29,19 @@
       <!-- 进度指示器 -->
       <div class="progress-header">
         <div class="steps-indicator">
-          当前环节：<span id="current-step-name" class="active-step-num">客户经理 - 问卷收集</span>
+          当前环节：<span id="current-step-name" class="active-step-num">基础健康问卷</span>
         </div>
         <div class="progress-bar-container">
           <div class="progress-bar-fill" id="progressBar"></div>
         </div>
       </div>
-
-      <section class="architecture-runtime-panel" aria-label="七层架构运行态">
-        <div class="runtime-header">
-          <div>
-            <h2>七层架构运行态</h2>
-            <span>云端 AI、数据层、业务容器、通用 API、Switch、UI 和端边算力统一可视化</span>
-          </div>
-          <div class="protocol-badge" id="protocolBadge">FastAPI Style /api/v1</div>
-        </div>
-
-        <div class="architecture-runtime-grid">
-          <div class="architecture-stack-3d" id="architectureStack3d" aria-label="3D 架构栈">
-            <div class="architecture-layer" data-layer="1">L1 云端平台：豆包 / 千问 / DS</div>
-            <div class="architecture-layer" data-layer="2">L2 数据层：Cache + Persistence</div>
-            <div class="architecture-layer" data-layer="3">L3 业务层：容器化 Agent + AI 对抗</div>
-            <div class="architecture-layer" data-layer="4">L4 API 层：通用协议</div>
-            <div class="architecture-layer" data-layer="5">L5 API Switch：全双工异步非阻塞</div>
-            <div class="architecture-layer" data-layer="6">L6 UI：MVC / MVVM</div>
-            <div class="architecture-layer" data-layer="7">L7 端边算力：浏览器本地推理</div>
-          </div>
-
-          <div class="runtime-metrics-grid">
-            <section class="runtime-card">
-              <div class="runtime-card-title">云端 AI 平台</div>
-              <div class="cloud-provider-grid" id="cloudProviderGrid"></div>
-            </section>
-
-            <section class="runtime-card">
-              <div class="runtime-card-title">API Switch 总调度</div>
-              <div class="api-switch-metrics" id="apiSwitchMetrics"></div>
-            </section>
-
-            <section class="runtime-card">
-              <div class="runtime-card-title">双层数据状态</div>
-              <div class="data-layer-status" id="dataLayerStatus"></div>
-            </section>
-
-            <section class="runtime-card">
-              <div class="runtime-card-title">端侧 / 边侧算力</div>
-              <div class="edge-compute-status" id="edgeComputeStatus"></div>
-            </section>
-          </div>
-        </div>
-      </section>
       
-      <!-- 步骤 1：客户经理问卷收集 -->
+      <!-- 步骤 1：基础健康问卷 -->
       <section class="step-view active" id="step-1">
         <div class="glass-panel">
           <div class="panel-header">
-            <h2 class="panel-title">👤 客户经理：基础健康问卷</h2>
-            <span style="font-size: 0.8rem; color: var(--text-muted);">问卷形式收集用户基础信息，获取用户画像</span>
+            <h2 class="panel-title">基础健康问卷</h2>
+            <span style="font-size: 0.8rem; color: var(--text-muted);">填写基础信息、健康目标、饮食禁忌和地域偏好，生成结构化画像</span>
           </div>
           
           <form id="healthForm" onsubmit="event.preventDefault();">
@@ -276,7 +172,7 @@
         </div>
       </section>
       
-      <!-- 动态模拟智能体分析中状态 -->
+      <!-- 动态分析中状态 -->
       <section class="step-view" id="step-loading">
         <div class="glass-panel">
           <div class="processing-overlay">
@@ -288,16 +184,16 @@
         </div>
       </section>
       
-      <!-- 步骤 2：饮食助理规划 -->
+      <!-- 步骤 2：膳食方案 -->
       <section class="step-view" id="step-2">
         <div class="glass-panel">
           <div class="panel-header">
-            <h2 class="panel-title">🍏 饮食助理：多套膳食规划生成</h2>
-            <span style="font-size: 0.8rem; color: var(--text-muted);">识别饮食偏好，生成饮食规划，提供多个方案</span>
+            <h2 class="panel-title">个性化膳食方案</h2>
+            <span style="font-size: 0.8rem; color: var(--text-muted);">基于用户画像生成 3 套不同侧重点的饮食方案</span>
           </div>
 
           <div class="profile-summary-grid" id="profileSummary" aria-live="polite">
-            <!-- 客户经理用户画像摘要 -->
+            <!-- 用户画像摘要 -->
           </div>
           
           <div class="plans-wrapper">
@@ -345,16 +241,16 @@
         </div>
       </section>
       
-      <!-- 步骤 3：食材助理清单 -->
+      <!-- 步骤 3：食材采购清单 -->
       <section class="step-view" id="step-3">
         <div class="glass-panel">
           <div class="panel-header">
-            <h2 class="panel-title">🛒 食材助理：食材采购清单规划</h2>
-            <span style="font-size: 0.8rem; color: var(--text-muted);">规划食材清单，分类汇总每个方案所需的采购明细</span>
+            <h2 class="panel-title">分类食材采购清单</h2>
+            <span style="font-size: 0.8rem; color: var(--text-muted);">为每套方案生成肉蛋奶、蔬果、谷物、调味品等采购明细</span>
           </div>
           
           <div style="margin-bottom: 1rem; font-size: 0.9rem; color: var(--text-secondary);" id="ingredientTipText">
-            以下是食材助理为您整理的采购食材明细，支持点击勾选已购买物品：
+            以下是根据当前方案整理的采购食材明细，支持点击勾选已购买物品：
           </div>
           
           <div class="ingredients-accordion" id="ingredientsAccordion">
@@ -368,12 +264,12 @@
         </div>
       </section>
       
-      <!-- 步骤 4：评估助理评估 -->
+      <!-- 步骤 4：方案评估 -->
       <section class="step-view" id="step-4">
         <div class="glass-panel">
           <div class="panel-header">
-            <h2 class="panel-title">📊 评估助理：方案量化推荐</h2>
-            <span style="font-size: 0.8rem; color: var(--text-muted);">对方案成本、季节、地域匹配度进行评估，选定最终推荐方案</span>
+            <h2 class="panel-title">方案量化评估</h2>
+            <span style="font-size: 0.8rem; color: var(--text-muted);">按成本、季节匹配度、地域匹配度量化对比，并自动推荐最终方案</span>
           </div>
           
           <div class="evaluation-layout">
@@ -423,10 +319,10 @@
             </div>
           </div>
 
-          <section class="ai-debate-panel" aria-label="多 AI 对抗评审">
+          <section class="ai-debate-panel" aria-label="方案智能复核">
             <div class="ai-debate-header">
-              <h3>多 AI 对抗评审</h3>
-              <span>豆包、千问、DeepSeek 对同一组方案进行独立评审，再由 Switch 汇总共识分</span>
+              <h3>方案智能复核</h3>
+              <span>系统从可执行性、营养结构和量化约束三个角度独立复核，并汇总为共识分</span>
             </div>
             <div class="ai-debate-grid" id="aiDebateContainer">
               <!-- 动态渲染三家云端 AI 对抗评分 -->
@@ -440,12 +336,12 @@
         </div>
       </section>
       
-      <!-- 步骤 5：营销助理推广 -->
+      <!-- 步骤 5：推广文案 -->
       <section class="step-view" id="step-5">
         <div class="glass-panel">
           <div class="panel-header">
-            <h2 class="panel-title">📣 营销助理：社交宣传文案生成</h2>
-            <span style="font-size: 0.8rem; color: var(--text-muted);">根据方案生成内容，用于各大平台软文推广或视频脚本分享</span>
+            <h2 class="panel-title">多平台推广文案</h2>
+            <span style="font-size: 0.8rem; color: var(--text-muted);">根据最终方案生成小红书、短视频脚本和微信公众号文案</span>
           </div>
           
           <div class="marketing-tabs-container">
@@ -514,14 +410,14 @@
       
     </main>
     
-    <!-- 底部：实时智能体协同日志 -->
+    <!-- 底部：实时处理进度 -->
     <footer class="console-panel">
       <div class="console-header">
         <div class="console-title">
           <span class="console-status"></span>
-          <span>智能体协同控制台日志 (Real-time Agent Console Logs)</span>
+          <span>处理进度</span>
         </div>
-        <div style="font-size: 0.7rem; color: var(--text-muted);">状态：协同运行中</div>
+        <div style="font-size: 0.7rem; color: var(--text-muted);">状态：生成中</div>
       </div>
       <div class="console-logs" id="consoleLogs">
         <!-- 实时协同日志动态插入 -->

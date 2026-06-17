@@ -1,5 +1,5 @@
 /* 
-  多智能体健康饮食规划系统 - style.css
+  个性化健康饮食规划系统 - style.css
   设计风格：现代深色质感仪表盘、毛玻璃效果、健康活力配色、微交互动效
 */
 
@@ -18,12 +18,12 @@
   --text-secondary: #9CA3AF;
   --text-muted: #6B7280;
 
-  /* 智能体专属色 */
-  --color-client: #3B82F6;       /* 科技蓝 - 客户经理 */
-  --color-diet: #10B981;         /* 翡翠绿 - 饮食助理 */
-  --color-ingredient: #F59E0B;   /* 活力黄 - 食材助理 */
-  --color-eval: #8B5CF6;         /* 迷幻紫 - 评估助理 */
-  --color-market: #EC4899;       /* 蜜桃粉 - 营销助理 */
+  /* 功能色 */
+  --color-client: #3B82F6;
+  --color-diet: #10B981;
+  --color-ingredient: #F59E0B;
+  --color-eval: #8B5CF6;
+  --color-market: #EC4899;
 
   --font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
   --transition-smooth: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
@@ -70,7 +70,7 @@ body {
   width: 100vw;
 }
 
-/* 侧边栏：智能体拓扑与导航 */
+/* 侧边栏：品牌与主题控制 */
 .sidebar {
   grid-row: 1 / 3;
   background: var(--sidebar-bg);
@@ -143,149 +143,6 @@ body {
   transform: translateY(-1px);
 }
 
-/* 智能体状态卡片列表 */
-.agent-list {
-  display: flex;
-  flex-direction: column;
-  gap: 1rem;
-  position: relative;
-}
-
-/* 智能体连接导线背景效果 */
-.agent-list::before {
-  content: '';
-  position: absolute;
-  left: 28px;
-  top: 25px;
-  bottom: 25px;
-  width: 2px;
-  background: linear-gradient(to bottom, 
-    var(--color-client), 
-    var(--color-diet), 
-    var(--color-ingredient), 
-    var(--color-eval), 
-    var(--color-market)
-  );
-  opacity: 0.2;
-  z-index: 1;
-}
-
-.agent-card {
-  position: relative;
-  display: flex;
-  align-items: center;
-  gap: 1rem;
-  padding: 0.85rem 1rem;
-  border-radius: 14px;
-  background: rgba(31, 41, 55, 0.4);
-  border: 1px solid rgba(255, 255, 255, 0.03);
-  cursor: pointer;
-  transition: var(--transition-smooth);
-  z-index: 2;
-}
-
-.agent-card:hover {
-  background: rgba(31, 41, 55, 0.6);
-  border-color: rgba(255, 255, 255, 0.08);
-  transform: translateX(3px);
-}
-
-.agent-card.active {
-  background: rgba(255, 255, 255, 0.05);
-  box-shadow: var(--panel-glow);
-}
-
-.agent-avatar {
-  width: 38px;
-  height: 38px;
-  border-radius: 10px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 1.25rem;
-  font-weight: bold;
-  background: #374151;
-  transition: var(--transition-smooth);
-}
-
-/* 激活状态和颜色定制 */
-.agent-card[data-agent="client"].active { border-color: var(--color-client); }
-.agent-card[data-agent="client"].active .agent-avatar { background: var(--color-client); box-shadow: 0 0 12px rgba(59, 130, 246, 0.5); }
-.agent-card[data-agent="diet"].active { border-color: var(--color-diet); }
-.agent-card[data-agent="diet"].active .agent-avatar { background: var(--color-diet); box-shadow: 0 0 12px rgba(16, 185, 129, 0.5); }
-.agent-card[data-agent="ingredient"].active { border-color: var(--color-ingredient); }
-.agent-card[data-agent="ingredient"].active .agent-avatar { background: var(--color-ingredient); box-shadow: 0 0 12px rgba(245, 158, 11, 0.5); }
-.agent-card[data-agent="eval"].active { border-color: var(--color-eval); }
-.agent-card[data-agent="eval"].active .agent-avatar { background: var(--color-eval); box-shadow: 0 0 12px rgba(139, 92, 246, 0.5); }
-.agent-card[data-agent="market"].active { border-color: var(--color-market); }
-.agent-card[data-agent="market"].active .agent-avatar { background: var(--color-market); box-shadow: 0 0 12px rgba(236, 72, 153, 0.5); }
-
-.agent-info {
-  flex: 1;
-}
-
-.agent-name {
-  font-size: 0.85rem;
-  font-weight: 600;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-}
-
-.agent-role {
-  font-size: 0.7rem;
-  color: var(--text-muted);
-  margin-top: 0.15rem;
-}
-
-.agent-status-dot {
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: var(--text-muted);
-}
-
-.active .agent-status-dot {
-  background: #10B981;
-  animation: pulse-dot 1.5s infinite;
-}
-
-.sidebar-architecture-panel {
-  border: 1px solid var(--panel-border);
-  border-radius: 14px;
-  padding: 1rem;
-  background: rgba(255, 255, 255, 0.04);
-}
-
-.sidebar-section-title {
-  font-size: 0.78rem;
-  font-weight: 700;
-  color: var(--text-secondary);
-  margin-bottom: 0.75rem;
-}
-
-.layer-status-list {
-  display: flex;
-  flex-direction: column;
-  gap: 0.45rem;
-}
-
-.layer-status-item {
-  font-size: 0.72rem;
-  line-height: 1.35;
-  color: var(--text-secondary);
-  border-left: 2px solid rgba(16, 185, 129, 0.5);
-  padding: 0.35rem 0.5rem;
-  background: rgba(16, 185, 129, 0.06);
-  border-radius: 0 8px 8px 0;
-}
-
-@keyframes pulse-dot {
-  0% { transform: scale(0.9); opacity: 0.6; }
-  50% { transform: scale(1.3); opacity: 1; }
-  100% { transform: scale(0.9); opacity: 0.6; }
-}
-
 /* 主工作区 */
 .workspace {
   grid-column: 2 / 3;
@@ -340,188 +197,6 @@ body {
   background: linear-gradient(to right, var(--color-client), var(--color-diet));
   border-radius: 3px;
   transition: width 0.5s ease-out;
-}
-
-/* 七层架构运行态 */
-.architecture-runtime-panel {
-  background: var(--panel-bg);
-  border: 1px solid var(--panel-border);
-  border-radius: 18px;
-  padding: 1.25rem;
-  backdrop-filter: blur(16px);
-  box-shadow: var(--panel-glow);
-}
-
-.runtime-header {
-  display: flex;
-  justify-content: space-between;
-  gap: 1rem;
-  align-items: flex-start;
-  margin-bottom: 1rem;
-}
-
-.runtime-header h2 {
-  font-size: 1.05rem;
-  font-weight: 700;
-  margin-bottom: 0.25rem;
-}
-
-.runtime-header span {
-  font-size: 0.78rem;
-  color: var(--text-secondary);
-  line-height: 1.45;
-}
-
-.protocol-badge {
-  flex: 0 0 auto;
-  font-size: 0.72rem;
-  font-weight: 700;
-  color: #bfdbfe;
-  background: rgba(59, 130, 246, 0.14);
-  border: 1px solid rgba(59, 130, 246, 0.28);
-  padding: 0.45rem 0.7rem;
-  border-radius: 999px;
-}
-
-.architecture-runtime-grid {
-  display: grid;
-  grid-template-columns: minmax(280px, 0.8fr) minmax(0, 1.6fr);
-  gap: 1rem;
-  align-items: stretch;
-}
-
-.architecture-stack-3d {
-  min-height: 290px;
-  perspective: 900px;
-  display: flex;
-  flex-direction: column;
-  justify-content: center;
-  gap: 0.42rem;
-  padding: 0.5rem 0.25rem;
-  overflow: hidden;
-}
-
-.architecture-layer {
-  min-height: 34px;
-  display: flex;
-  align-items: center;
-  color: var(--text-primary);
-  font-size: 0.72rem;
-  font-weight: 700;
-  line-height: 1.35;
-  padding: 0.55rem 0.7rem;
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  border-left: 4px solid var(--color-diet);
-  border-radius: 8px;
-  background: linear-gradient(135deg, rgba(31, 41, 55, 0.86), rgba(17, 24, 39, 0.48));
-  box-shadow: 0 10px 18px rgba(0, 0, 0, 0.18);
-  transform: rotateX(48deg) rotateZ(-5deg);
-  transform-origin: left center;
-}
-
-.architecture-layer[data-layer="1"] { border-left-color: var(--color-client); margin-left: 0; }
-.architecture-layer[data-layer="2"] { border-left-color: var(--color-diet); margin-left: 0.35rem; }
-.architecture-layer[data-layer="3"] { border-left-color: var(--color-ingredient); margin-left: 0.7rem; }
-.architecture-layer[data-layer="4"] { border-left-color: #14B8A6; margin-left: 1.05rem; }
-.architecture-layer[data-layer="5"] { border-left-color: var(--color-eval); margin-left: 1.4rem; }
-.architecture-layer[data-layer="6"] { border-left-color: var(--color-market); margin-left: 1.75rem; }
-.architecture-layer[data-layer="7"] { border-left-color: #22C55E; margin-left: 2.1rem; }
-
-.runtime-metrics-grid {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 0.85rem;
-}
-
-.runtime-card {
-  min-height: 128px;
-  border: 1px solid rgba(255, 255, 255, 0.05);
-  border-radius: 12px;
-  background: rgba(31, 41, 55, 0.18);
-  padding: 0.85rem;
-  display: flex;
-  flex-direction: column;
-  gap: 0.65rem;
-}
-
-.runtime-card-title {
-  font-size: 0.8rem;
-  font-weight: 700;
-  color: var(--text-primary);
-}
-
-.cloud-provider-grid,
-.api-switch-metrics,
-.data-layer-status,
-.edge-compute-status {
-  display: grid;
-  gap: 0.55rem;
-}
-
-.provider-card,
-.switch-metric-row,
-.data-status-row,
-.edge-status-row {
-  border: 1px solid rgba(255, 255, 255, 0.05);
-  border-radius: 9px;
-  background: rgba(17, 24, 39, 0.34);
-  padding: 0.55rem 0.65rem;
-}
-
-.provider-card {
-  display: grid;
-  grid-template-columns: 1fr auto;
-  gap: 0.35rem;
-  align-items: center;
-}
-
-.provider-name,
-.metric-label,
-.data-label,
-.edge-label {
-  font-size: 0.74rem;
-  font-weight: 700;
-  color: var(--text-primary);
-}
-
-.provider-meta,
-.metric-value,
-.data-value,
-.edge-value {
-  font-size: 0.72rem;
-  line-height: 1.35;
-  color: var(--text-secondary);
-}
-
-.provider-status {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  background: var(--color-diet);
-  box-shadow: 0 0 0 4px rgba(16, 185, 129, 0.12);
-}
-
-.api-route-list,
-.duplex-channel-list {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.35rem;
-}
-
-.api-route-pill,
-.duplex-channel-pill {
-  font-size: 0.68rem;
-  color: var(--text-secondary);
-  background: rgba(59, 130, 246, 0.1);
-  border: 1px solid rgba(59, 130, 246, 0.18);
-  border-radius: 999px;
-  padding: 0.25rem 0.45rem;
-}
-
-.duplex-channel-pill.active {
-  color: #bbf7d0;
-  background: rgba(16, 185, 129, 0.16);
-  border-color: rgba(16, 185, 129, 0.35);
 }
 
 /* 各步骤视图容器 */
@@ -695,7 +370,7 @@ input:focus, select:focus, textarea:focus {
   box-shadow: none;
 }
 
-/* 智能体工作状态动画 */
+/* 生成中状态动画 */
 .processing-overlay {
   display: flex;
   flex-direction: column;
@@ -1025,7 +700,7 @@ input:focus, select:focus, textarea:focus {
   text-decoration: line-through;
 }
 
-/* 步骤 4：评估助理 */
+/* 步骤 4：方案评估 */
 .evaluation-layout {
   display: grid;
   grid-template-columns: 1fr 1fr;
@@ -1341,7 +1016,7 @@ input:focus, select:focus, textarea:focus {
   color: #A7F3D0;
 }
 
-/* 底部实时智能体协作日志 */
+/* 底部实时处理进度 */
 .console-panel {
   grid-column: 2 / 3;
   grid-row: 2 / 3;
@@ -1378,6 +1053,12 @@ input:focus, select:focus, textarea:focus {
   border-radius: 50%;
   background: var(--color-diet);
   animation: pulse-dot 1s infinite;
+}
+
+@keyframes pulse-dot {
+  0% { transform: scale(0.9); opacity: 0.6; }
+  50% { transform: scale(1.3); opacity: 1; }
+  100% { transform: scale(0.9); opacity: 0.6; }
 }
 
 .console-logs {
@@ -1495,34 +1176,20 @@ input:focus, select:focus, textarea:focus {
   -webkit-text-fill-color: transparent;
 }
 
-:root[data-theme="light"] .agent-card,
 :root[data-theme="light"] .plan-tab,
 :root[data-theme="light"] .meal-card,
 :root[data-theme="light"] .nutrition-card,
 :root[data-theme="light"] .category-group,
 :root[data-theme="light"] .weight-slider-item,
 :root[data-theme="light"] .score-row,
-:root[data-theme="light"] .runtime-card,
-:root[data-theme="light"] .ai-review-card,
-:root[data-theme="light"] .provider-card,
-:root[data-theme="light"] .switch-metric-row,
-:root[data-theme="light"] .data-status-row,
-:root[data-theme="light"] .edge-status-row,
-:root[data-theme="light"] .sidebar-architecture-panel {
+:root[data-theme="light"] .ai-review-card {
   background: rgba(255, 255, 255, 0.56);
   border-color: rgba(38, 74, 56, 0.1);
 }
 
 :root[data-theme="light"] .progress-header,
-:root[data-theme="light"] .glass-panel,
-:root[data-theme="light"] .architecture-runtime-panel {
+:root[data-theme="light"] .glass-panel {
   background: var(--panel-bg);
-}
-
-:root[data-theme="light"] .architecture-layer {
-  background: linear-gradient(135deg, rgba(255, 255, 255, 0.94), rgba(238, 247, 238, 0.78));
-  border-color: rgba(38, 74, 56, 0.12);
-  box-shadow: 0 10px 18px rgba(45, 64, 52, 0.12);
 }
 
 :root[data-theme="light"] input,
@@ -1607,11 +1274,6 @@ input:focus, select:focus, textarea:focus {
     padding: 1rem;
   }
 
-  .agent-list {
-    display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-  
   .workspace {
     grid-column: 1 / 2;
     grid-row: 2 / 3;
@@ -1635,9 +1297,7 @@ input:focus, select:focus, textarea:focus {
 
   .questionnaire-grid,
   .plan-content-grid,
-  .evaluation-layout,
-  .architecture-runtime-grid,
-  .runtime-metrics-grid {
+  .evaluation-layout {
     grid-template-columns: 1fr;
   }
 
@@ -1645,16 +1305,6 @@ input:focus, select:focus, textarea:focus {
   .ingredient-items-list,
   .ai-debate-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-
-  .architecture-stack-3d {
-    min-height: auto;
-    overflow-x: auto;
-    padding: 0.75rem;
-  }
-
-  .architecture-layer {
-    min-width: 260px;
   }
 
   .plans-selector-tabs,
@@ -1679,20 +1329,14 @@ input:focus, select:focus, textarea:focus {
     align-items: flex-start;
   }
 
-  .agent-list,
   .profile-summary-grid,
   .ingredient-items-list,
   .ai-debate-grid {
     grid-template-columns: 1fr;
   }
 
-  .runtime-header,
   .ai-debate-header {
     flex-direction: column;
-  }
-
-  .protocol-badge {
-    width: fit-content;
   }
 
   .glass-panel {

@@ -1,6 +1,6 @@
 /**
- * 多智能体健康饮食规划系统 - app.js
- * 负责状态控制、智能体模拟算法、动态数据渲染、以及可视化的权重评估运算
+ * 个性化健康饮食规划系统 - app.js
+ * 负责状态控制、业务流程、动态数据渲染、以及权重评估运算
  */
 
 // 全局状态管理
@@ -34,7 +34,7 @@ const state = {
     lastKey: "system.boot"
   },
   edgeCompute: {
-    location: "端侧待命",
+    location: "本地待命",
     bmi: "--",
     bmr: "--",
     tdee: "--",
@@ -44,6 +44,13 @@ const state = {
   aiDebate: {
     reviews: [],
     consensus: []
+  },
+  backend: {
+    enabled: true,
+    online: false,
+    baseUrl: "http://127.0.0.1:8000",
+    lastError: "未检测",
+    eventStream: "idle"
   },
   apiEvents: []
 };
@@ -55,14 +62,18 @@ const STORAGE_KEYS = {
 
 const memoryCache = new Map();
 let persistentRecords = {};
+let backendEventSource = null;
+let backendStreamAnnounced = false;
 
-const architectureRegistry = {
+const serviceRegistry = {
   cloudProviders: [
     {
       id: "doubao",
       name: "豆包 Doubao",
+      displayName: "可执行性复核",
       shortName: "豆",
       role: "生活化表达与可执行建议",
+      displayRole: "口味适配、采购便利性、执行难度",
       latency: 96,
       cost: "低",
       specialty: "口味适配"
@@ -70,8 +81,10 @@ const architectureRegistry = {
     {
       id: "qianwen",
       name: "通义千问 Qianwen",
+      displayName: "营养结构复核",
       shortName: "千",
       role: "结构化推理与中文语义",
+      displayRole: "宏量营养比例、饮食目标一致性",
       latency: 112,
       cost: "中",
       specialty: "方案解释"
@@ -79,8 +92,10 @@ const architectureRegistry = {
     {
       id: "deepseek",
       name: "DeepSeek DS",
+      displayName: "量化约束复核",
       shortName: "DS",
       role: "数学评分与对抗校验",
+      displayRole: "成本、时令、地域约束稳定性",
       latency: 128,
       cost: "低",
       specialty: "量化评审"
@@ -107,7 +122,7 @@ const architectureRegistry = {
 
 const apiSwitch = {
   request(route, payload = {}, options = {}) {
-    const routeConfig = architectureRegistry.apiRoutes.find(item => item.route === route);
+    const routeConfig = serviceRegistry.apiRoutes.find(item => item.route === route);
     const envelope = createApiEnvelope(route, payload, {
       method: options.method || routeConfig?.method || "POST",
       source: options.source || "ui-controller",
@@ -124,11 +139,16 @@ const apiSwitch = {
     registerApiEvent("request", envelope);
     renderApiSwitchMetrics();
 
-    return new Promise((resolve) => {
+    const resolveLocal = (fallbackReason = "") => new Promise((resolve) => {
       setTimeout(() => {
         state.apiSwitch.queueDepth = Math.max(0, state.apiSwitch.queueDepth - 1);
         state.apiSwitch.totalResponses += 1;
         state.apiSwitch.activeChannels = state.apiSwitch.activeChannels.filter(item => item !== channel);
+        if (fallbackReason) {
+          state.backend.online = false;
+          state.backend.lastError = fallbackReason;
+          stopBackendEventStream("fallback local");
+        }
 
         const response = {
           ...envelope,
@@ -147,6 +167,33 @@ const apiSwitch = {
         resolve(response);
       }, latency);
     });
+
+    if (!state.backend.enabled) {
+      return resolveLocal();
+    }
+
+    return sendBackendEnvelope(envelope)
+      .then(response => {
+        state.apiSwitch.queueDepth = Math.max(0, state.apiSwitch.queueDepth - 1);
+        state.apiSwitch.totalResponses += 1;
+        state.apiSwitch.activeChannels = state.apiSwitch.activeChannels.filter(item => item !== channel);
+        state.backend.online = true;
+        state.backend.lastError = "";
+        registerApiEvent("response", { ...envelope, route, traceId: response.traceId || envelope.traceId });
+        renderApiSwitchMetrics();
+        return {
+          ...envelope,
+          responseAt: response.responseAt || new Date().toISOString(),
+          latency: response.latencyMs || 0,
+          ok: response.ok,
+          data: response.data || {},
+          error: response.error || null
+        };
+      })
+      .catch(err => {
+        state.apiSwitch.totalErrors += 1;
+        return resolveLocal(err.message || "backend unavailable");
+      });
   }
 };
 
@@ -156,9 +203,9 @@ document.addEventListener("DOMContentLoaded", () => {
   initArchitectureRuntime();
   initEventListeners();
   initWeightSliders();
-  addSystemLog("system", "系统初始化完成。多智能体协作总线正处于待命状态。");
-  addSystemLog("switch", "API Switch 已以 FastAPI 风格路由启动：/api/v1/*，请求/响应事件均为异步非阻塞。");
-  addSystemLog("client", "您好！我是您的客户经理。请填写左侧的基础健康问卷，我将为您建立数字画像。");
+  addSystemLog("system", "系统初始化完成，已准备生成个性化饮食方案。");
+  addSystemLog("switch", "正在检查后端服务连接；若服务不可用，将自动使用本地计算流程。");
+  addSystemLog("client", "请填写基础健康问卷，系统将生成结构化用户画像。");
 });
 
 function initTheme() {
@@ -210,10 +257,11 @@ function initArchitectureRuntime() {
   saveDataRecord("system.boot", {
     bootAt: new Date().toISOString(),
     layers: 7,
-    providers: architectureRegistry.cloudProviders.map(provider => provider.name)
+    providers: serviceRegistry.cloudProviders.map(provider => provider.displayName)
   });
-  renderArchitectureRuntime();
+  renderRuntimeViews();
   renderAiDebate();
+  probeBackend();
   apiSwitch.request("/api/v1/system/boot", { status: "ready" }, {
     source: "ui-controller",
     target: "api-switch",
@@ -302,7 +350,8 @@ function registerApiEvent(type, envelope) {
     route: envelope.route,
     source: envelope.source,
     target: envelope.target,
-    at: new Date().toISOString()
+    message: envelope.message || "",
+    at: envelope.at || new Date().toISOString()
   };
 
   state.apiEvents.unshift(event);
@@ -315,127 +364,144 @@ function registerApiEvent(type, envelope) {
   }
 }
 
-function renderArchitectureRuntime() {
-  renderLayerStatusList();
-  renderCloudProviders();
+function registerBackendApiEvent(event) {
+  if (!event || !event.trace_id) return;
+
+  const normalized = {
+    type: event.type,
+    traceId: event.trace_id,
+    route: event.route,
+    source: event.source,
+    target: event.target,
+    message: event.message,
+    at: event.at,
+    backend: true
+  };
+  const duplicate = state.apiEvents.some(item => (
+    item.traceId === normalized.traceId
+    && item.type === normalized.type
+    && item.at === normalized.at
+  ));
+  if (duplicate) return;
+
+  state.apiEvents.unshift(normalized);
+  state.apiEvents = state.apiEvents.slice(0, 20);
+
+  try {
+    localStorage.setItem(STORAGE_KEYS.apiEvents, JSON.stringify(state.apiEvents));
+  } catch (err) {
+    console.warn("写入后端 API 事件失败", err);
+  }
+
+  if (event.type === "error") {
+    addSystemLog("switch", `服务处理异常：${event.message}`);
+  }
+}
+
+function getBackendBaseUrl() {
+  const configured = localStorage.getItem("dietPlannerBackendUrl");
+  return configured || state.backend.baseUrl;
+}
+
+async function sendBackendEnvelope(envelope) {
+  const baseUrl = getBackendBaseUrl();
+  state.backend.baseUrl = baseUrl;
+
+  const response = await fetch(`${baseUrl}/api/v1/switch/dispatch`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(envelope)
+  });
+
+  if (!response.ok) {
+    throw new Error(`backend HTTP ${response.status}`);
+  }
+
+  startBackendEventStream();
+  return response.json();
+}
+
+async function probeBackend() {
+  const baseUrl = getBackendBaseUrl();
+  state.backend.baseUrl = baseUrl;
+
+  try {
+    const response = await fetch(`${baseUrl}/api/v1/health`, { method: "GET" });
+    if (!response.ok) throw new Error(`health HTTP ${response.status}`);
+    const data = await response.json();
+    state.backend.online = true;
+    state.backend.lastError = `${data.service} ${data.version} · ${data.providerMode}`;
+    startBackendEventStream();
+  } catch (err) {
+    state.backend.online = false;
+    state.backend.lastError = err.message || "backend unavailable";
+    stopBackendEventStream("offline");
+  }
+
   renderApiSwitchMetrics();
-  renderDataLayerStatus();
-  renderEdgeComputeStatus();
+}
+
+function startBackendEventStream() {
+  if (!window.EventSource || backendEventSource) return;
+
+  const baseUrl = getBackendBaseUrl();
+  state.backend.eventStream = "connecting";
+  backendEventSource = new EventSource(`${baseUrl}/api/v1/events/stream`);
+
+  backendEventSource.onopen = () => {
+    state.backend.eventStream = "streaming";
+    if (!backendStreamAnnounced) {
+      backendStreamAnnounced = true;
+      addSystemLog("switch", "已连接实时处理进度服务。");
+    }
+    renderApiSwitchMetrics();
+  };
+
+  backendEventSource.onmessage = (event) => {
+    try {
+      registerBackendApiEvent(JSON.parse(event.data));
+      renderApiSwitchMetrics();
+    } catch (err) {
+      console.warn("解析后端 SSE 事件失败", err);
+    }
+  };
+
+  backendEventSource.onerror = () => {
+    state.backend.eventStream = "retrying";
+    renderApiSwitchMetrics();
+  };
+}
+
+function stopBackendEventStream(status = "closed") {
+  if (backendEventSource) {
+    backendEventSource.close();
+    backendEventSource = null;
+  }
+  state.backend.eventStream = status;
+}
+
+function renderRuntimeViews() {
+  renderAiDebate();
 }
 
 function renderLayerStatusList() {
-  const container = document.getElementById("layerStatusList");
-  if (!container) return;
-
-  const layerItems = [
-    "L1 云端 AI：豆包 / 千问 / DeepSeek 在线",
-    "L2 数据层：Map 热缓存 + localStorage 持久化",
-    "L3 业务层：5 个 Agent 容器 + 多 API",
-    "L4 API 层：统一 JSON 协议信封",
-    "L5 Switch：全双工异步非阻塞调度",
-    "L6 UI：Model / ViewModel / Controller",
-    "L7 端边：浏览器端侧计算 + 云端协同"
-  ];
-
-  container.innerHTML = layerItems.map(item => `
-    <div class="layer-status-item">${item}</div>
-  `).join("");
+  return;
 }
 
 function renderCloudProviders() {
-  const container = document.getElementById("cloudProviderGrid");
-  if (!container) return;
-
-  container.innerHTML = architectureRegistry.cloudProviders.map(provider => `
-    <div class="provider-card">
-      <div>
-        <div class="provider-name">${provider.name}</div>
-        <div class="provider-meta">${provider.role} · ${provider.latency}ms · 成本${provider.cost}</div>
-      </div>
-      <span class="provider-status" title="${provider.specialty}"></span>
-    </div>
-  `).join("");
+  return;
 }
 
 function renderApiSwitchMetrics() {
-  const container = document.getElementById("apiSwitchMetrics");
-  if (!container) return;
-
-  const routes = architectureRegistry.apiRoutes.slice(1, 7).map(item => item.route.replace("/api/v1/", ""));
-  const containers = architectureRegistry.businessContainers.map(item => item.name);
-  const activeChannels = state.apiSwitch.activeChannels.length > 0
-    ? state.apiSwitch.activeChannels
-    : ["ui-controller<->api-switch"];
-
-  container.innerHTML = `
-    <div class="switch-metric-row">
-      <div class="metric-label">队列 / 请求 / 响应</div>
-      <div class="metric-value">${state.apiSwitch.queueDepth} / ${state.apiSwitch.totalRequests} / ${state.apiSwitch.totalResponses}</div>
-    </div>
-    <div class="switch-metric-row">
-      <div class="metric-label">最近路由</div>
-      <div class="metric-value">${state.apiSwitch.lastRoute}</div>
-    </div>
-    <div class="switch-metric-row">
-      <div class="metric-label">全双工通道</div>
-      <div class="duplex-channel-list">
-        ${activeChannels.map(channel => `<span class="duplex-channel-pill ${state.apiSwitch.activeChannels.length ? "active" : ""}">${channel}</span>`).join("")}
-      </div>
-    </div>
-    <div class="switch-metric-row">
-      <div class="metric-label">FastAPI 风格路由</div>
-      <div class="api-route-list">
-        ${routes.map(route => `<span class="api-route-pill">${route}</span>`).join("")}
-      </div>
-    </div>
-    <div class="switch-metric-row">
-      <div class="metric-label">业务容器</div>
-      <div class="api-route-list">
-        ${containers.map(name => `<span class="api-route-pill">${name}</span>`).join("")}
-      </div>
-    </div>
-  `;
+  return;
 }
 
 function renderDataLayerStatus() {
-  const container = document.getElementById("dataLayerStatus");
-  if (!container) return;
-
-  const persistedKeys = Object.keys(persistentRecords).length;
-  container.innerHTML = `
-    <div class="data-status-row">
-      <div class="data-label">热缓存 Map</div>
-      <div class="data-value">${memoryCache.size} 条记录 · 命中 ${state.dataLayer.cacheHits} 次</div>
-    </div>
-    <div class="data-status-row">
-      <div class="data-label">持久化 localStorage</div>
-      <div class="data-value">${persistedKeys} 条快照 · 写入 ${state.dataLayer.persistenceWrites} 次</div>
-    </div>
-    <div class="data-status-row">
-      <div class="data-label">最近数据键</div>
-      <div class="data-value">${state.dataLayer.lastKey}</div>
-    </div>
-  `;
+  return;
 }
 
 function renderEdgeComputeStatus() {
-  const container = document.getElementById("edgeComputeStatus");
-  if (!container) return;
-
-  container.innerHTML = `
-    <div class="edge-status-row">
-      <div class="edge-label">计算位置</div>
-      <div class="edge-value">${state.edgeCompute.location}</div>
-    </div>
-    <div class="edge-status-row">
-      <div class="edge-label">BMI / BMR / TDEE</div>
-      <div class="edge-value">${state.edgeCompute.bmi} / ${state.edgeCompute.bmr} / ${state.edgeCompute.tdee}</div>
-    </div>
-    <div class="edge-status-row">
-      <div class="edge-label">端侧耗时 / 缓存态</div>
-      <div class="edge-value">${state.edgeCompute.runtimeMs}ms / ${state.edgeCompute.cacheState}</div>
-    </div>
-  `;
+  return;
 }
 
 function computeEdgeProfile(formData) {
@@ -456,7 +522,7 @@ function computeEdgeProfile(formData) {
   const runtimeMs = Math.max(1, Math.round(performance.now() - startedAt));
 
   state.edgeCompute = {
-    location: "浏览器端侧计算",
+    location: "本地浏览器计算",
     bmi: bmi.toFixed(1),
     bmr: `${Math.round(bmr)} kcal`,
     tdee: `${tdee} kcal`,
@@ -562,7 +628,7 @@ function initEventListeners() {
       document.getElementById("weightRegion").value = 34;
       updateWeightTextDisplays();
       state.edgeCompute = {
-        location: "端侧待命",
+        location: "本地待命",
         bmi: "--",
         bmr: "--",
         tdee: "--",
@@ -571,7 +637,7 @@ function initEventListeners() {
       };
       state.aiDebate = { reviews: [], consensus: [] };
       saveDataRecord("session.reset", { resetAt: new Date().toISOString() });
-      renderArchitectureRuntime();
+      renderRuntimeViews();
       renderAiDebate();
 
       goToStep(1);
@@ -580,7 +646,7 @@ function initEventListeners() {
       const consoleLogs = document.getElementById("consoleLogs");
       consoleLogs.innerHTML = "";
       addSystemLog("system", "系统状态已重置，准备开启新的健康规划流程。");
-      addSystemLog("client", "您好！我是您的客户经理。请重新填写健康问卷。");
+      addSystemLog("client", "请重新填写基础健康问卷。");
     });
   }
 
@@ -657,7 +723,7 @@ function initWeightSliders() {
 
       updateWeightTextDisplays();
       
-      // 触发评估助理的实时评分更新
+      // 触发评估结果实时更新
       if (state.currentStep === 4) {
         evaluatePlansRealtime();
       }
@@ -696,26 +762,17 @@ function goToStep(step) {
   document.getElementById("progressBar").style.width = `${progressPercent}%`;
   
   const stepNames = [
-    "客户经理 - 问卷收集",
-    "饮食助理 - 方案定制",
-    "食材助理 - 清单规划",
-    "评估助理 - 方案评估",
-    "营销助理 - 软文推广"
+    "基础健康问卷",
+    "个性化膳食方案",
+    "分类食材采购清单",
+    "方案量化评估",
+    "多平台推广文案"
   ];
   document.getElementById("current-step-name").innerText = stepNames[step - 1];
 
-  // 侧边栏智能体高亮控制
-  document.querySelectorAll(".agent-card").forEach(card => {
-    card.classList.remove("active");
-  });
-
-  const agentMapping = ["client", "diet", "ingredient", "eval", "market"];
-  const currentAgent = agentMapping[step - 1];
-  const agentEl = document.getElementById(`agent-${currentAgent}`);
-  if (agentEl) agentEl.classList.add("active");
 }
 
-// 带加载动画和日志的智能体步骤流转
+// 带加载动画和日志的步骤流转
 function triggerStepTransition(targetStep) {
   // 显示加载遮罩
   const loadingView = document.getElementById("step-loading");
@@ -726,9 +783,9 @@ function triggerStepTransition(targetStep) {
 
   const processingText = document.getElementById("processingText");
   
-  // 注入不同步骤的智能体日志流
+  // 注入不同步骤的处理进度
   if (targetStep === 2) {
-    processingText.innerText = "饮食助理正在根据画像为您设计膳食规划...";
+    processingText.innerText = "正在根据画像设计膳食规划...";
 
     apiSwitch.request("/api/v1/diet/plans", {
       profile: state.formData,
@@ -738,9 +795,9 @@ function triggerStepTransition(targetStep) {
       target: "diet-planner"
     });
     
-    enqueueLog("client", "问卷收集完成，正在处理过滤字段、排查过敏源...");
-    enqueueLog("switch", "用户健康画像已封装为通用 API 信封，正通过 Switch 发送至 [饮食助理]。");
-    enqueueLog("diet", "收到用户健康画像！");
+    enqueueLog("client", "问卷收集完成，正在整理画像字段并排查过敏源。");
+    enqueueLog("switch", "用户健康画像已提交，正在生成膳食方案。");
+    enqueueLog("diet", "用户画像已生成。");
     enqueueLog("diet", `目标：${translateGoal(state.formData.goal)} | 饮食风格：${translateHabit(state.formData.dietHabit)}`);
     enqueueLog("diet", `过敏排除食材：${state.formData.allergies.length > 0 ? state.formData.allergies.map(translateAllergy).join('、') : '无'}`);
     enqueueLog("diet", "基于 Mifflin-St Jeor 公式计算能量代谢...");
@@ -750,7 +807,7 @@ function triggerStepTransition(targetStep) {
 
     enqueueLog("diet", `计算完成。基础代谢(BMR) ≈ ${state.bmr} kcal，日消耗(TDEE) ≈ ${state.tdee} kcal。每日饮食热量靶点设定。`);
     enqueueLog("diet", `已成功为您定制了3套侧重点不同的健康饮食方案：\n1. ${state.plans[0].name}\n2. ${state.plans[1].name}\n3. ${state.plans[2].name}`);
-    enqueueLog("diet", "已将膳食数据流发送给 [食材助理] 进行采购量核查。");
+    enqueueLog("diet", "膳食方案已生成，下一步将拆解为采购清单。");
     saveDataRecord("diet.plans.current", state.plans);
     
     setTimeout(() => {
@@ -759,7 +816,7 @@ function triggerStepTransition(targetStep) {
     }, 2800);
 
   } else if (targetStep === 3) {
-    processingText.innerText = "食材助理正在拆解膳食结构，生成食材采购清单...";
+    processingText.innerText = "正在拆解膳食结构，生成食材采购清单...";
 
     apiSwitch.request("/api/v1/ingredients/list", {
       activePlanIndex: state.activePlanIndex,
@@ -769,7 +826,7 @@ function triggerStepTransition(targetStep) {
       target: "ingredient-planner"
     });
     
-    enqueueLog("ingredient", "收到饮食方案包。开始进行食材拆解与用量折算...");
+    enqueueLog("ingredient", "正在按方案拆解食材并折算用量。");
     enqueueLog("ingredient", `分析配菜风格为：${translateRegion(state.formData.region)}...`);
     
     const allergiesStr = state.formData.allergies.map(translateAllergy).join('、');
@@ -778,8 +835,8 @@ function triggerStepTransition(targetStep) {
     }
 
     enqueueLog("ingredient", "已对3套方案分别计算出：生鲜肉蛋奶类、时令蔬菜水果类、膳食粗粮谷物类以及调味耗材的具体用量。");
-    enqueueLog("switch", "食材清单通过 POST /api/v1/ingredients/list 完成路由，准备送入评估容器。");
-    enqueueLog("ingredient", "食材清单规划完成。加入了高温储鲜与保水防潮建议。发送给 [评估助理] 进行可行性打分。");
+    enqueueLog("switch", "食材清单已生成，准备进入方案评估。");
+    enqueueLog("ingredient", "食材清单规划完成，并加入高温储鲜与保水防潮建议。");
     saveDataRecord("ingredients.current", state.plans.map(plan => ({
       name: plan.name,
       ingredients: plan.ingredients
@@ -791,7 +848,7 @@ function triggerStepTransition(targetStep) {
     }, 2400);
 
   } else if (targetStep === 4) {
-    processingText.innerText = "评估助理正在基于成本、地域、夏季时令进行多维评分...";
+    processingText.innerText = "正在基于成本、地域和夏季时令进行多维评分...";
 
     apiSwitch.request("/api/v1/evaluation/score", {
       weights: state.weights,
@@ -801,22 +858,22 @@ function triggerStepTransition(targetStep) {
       target: "evaluation-engine"
     });
     
-    enqueueLog("eval", "接管数据流。启动综合推荐评分模型...");
+    enqueueLog("eval", "启动综合推荐评分模型。");
     enqueueLog("eval", `引入约束条件：[夏季生鲜时令指数]、[${translateRegion(state.formData.region)}食材物价指数]、[营养均衡比例评估]。`);
     enqueueLog("eval", `当前推荐权重设为 -> 成本控制: ${state.weights.cost}% | 季节适宜: ${state.weights.season}% | 地域匹配: ${state.weights.region}%`);
     enqueueLog("eval", "正在使用归一化加权公式实时计算 3 个方案的最终健康推荐评分。");
-    enqueueLog("switch", "Switch 已并行唤起豆包、千问、DeepSeek 三个云端 Provider 做多 AI 对抗评审。");
+    enqueueLog("switch", "正在从可执行性、营养结构和量化约束三个角度进行独立复核。");
 
     setTimeout(() => {
       goToStep(4);
       evaluatePlansRealtime();
       runAiDebateForPlans();
       enqueueLog("eval", `打分已就绪！当前判定综合得分最高的是：【${state.plans[state.selectedPlanIndex].name}】。`);
-      enqueueLog("eval", "用户可手动调节权重滑块重新评估。确定最终方案后将发送给 [营销助理] 生成文案。");
+      enqueueLog("eval", "用户可手动调节权重滑块重新评估。确定最终方案后将生成多平台文案。");
     }, 2500);
 
   } else if (targetStep === 5) {
-    processingText.innerText = "营销助理正在提取膳食精髓，撰写多渠道宣传推广内容...";
+    processingText.innerText = "正在提取膳食亮点，撰写多渠道宣传推广内容...";
 
     apiSwitch.request("/api/v1/marketing/content", {
       selectedPlanIndex: state.selectedPlanIndex,
@@ -826,7 +883,7 @@ function triggerStepTransition(targetStep) {
       target: "marketing-writer"
     });
     
-    enqueueLog("market", `收到最终选定食谱：【${state.plans[state.selectedPlanIndex].name}】。`);
+    enqueueLog("market", `最终选定食谱：【${state.plans[state.selectedPlanIndex].name}】。`);
     enqueueLog("market", "开始提取核心亮点：低热量、营养均衡、风味特色...");
     enqueueLog("market", "✍️ 正在撰写小红书种草软文：结合流行表情符号及健康标签...");
     enqueueLog("market", "🎬 正在编写抖音短视频分镜头脚本：设计画面运镜、旁白、BGM卡点...");
@@ -835,7 +892,7 @@ function triggerStepTransition(targetStep) {
     setTimeout(() => {
       goToStep(5);
       generateMarketingTexts();
-      enqueueLog("market", "✅ 所有平台的自媒体推广文案与视频脚本生成完毕！支持一键复制，助力健康分享！");
+      enqueueLog("market", "所有平台的推广文案与视频脚本生成完毕，支持一键复制。");
     }, 2800);
   }
 }
@@ -872,10 +929,10 @@ function handleFormSubmit() {
     source: "ui-controller",
     target: "customer-manager"
   });
-  enqueueLog("data", "用户画像已写入数据层：端侧热缓存 Map + localStorage 持久化快照。");
-  enqueueLog("switch", "画像创建请求已进入 API Switch：POST /api/v1/profile/create。");
+  enqueueLog("data", "用户画像已保存，后续步骤可继续复用。");
+  enqueueLog("switch", "画像创建请求已进入处理队列。");
 
-  // 开启多智能体流转动画，流转到步骤 2 (饮食助理)
+  // 开启流转动画，进入膳食方案生成
   triggerStepTransition(2);
 }
 
@@ -915,7 +972,7 @@ function calculateAndGenerateDietData() {
   state.targetCalories = targetCalories;
   state.edgeCompute = {
     ...state.edgeCompute,
-    location: "浏览器端侧计算 + 云端协同",
+    location: "本地计算 + 云端复核",
     bmr: `${state.bmr} kcal`,
     tdee: `${state.tdee} kcal`
   };
@@ -1534,7 +1591,7 @@ function renderIngredients() {
 
   const tipText = document.getElementById("ingredientTipText");
   if (tipText) {
-    tipText.innerText = `以下是食材助理为方案【${activePlan.name}】规划的食材清单（已自动替换过敏食材并在适宜的夏季时令期）：`;
+    tipText.innerText = `以下是方案【${activePlan.name}】对应的采购食材清单（已自动替换过敏食材并优先选择适宜的夏季时令食材）：`;
   }
 
   const categoryHeaders = {
@@ -1649,8 +1706,8 @@ function buildProviderReview(provider) {
 
   return {
     providerId: provider.id,
-    providerName: provider.name,
-    role: provider.role,
+    providerName: provider.displayName || provider.name,
+    role: provider.displayRole || provider.role,
     latency: provider.latency,
     planScores,
     note: noteMap[provider.id]
@@ -1662,7 +1719,7 @@ function runAiDebateForPlans() {
 
   renderAiDebate(true);
 
-  const reviewCalls = architectureRegistry.cloudProviders.map(provider => {
+  const reviewCalls = serviceRegistry.cloudProviders.map(provider => {
     return apiSwitch.request("/api/v1/cloud/providers/review", {
       provider: provider.id,
       plans: state.plans.map(plan => ({
@@ -1674,7 +1731,12 @@ function runAiDebateForPlans() {
       source: "evaluation-engine",
       target: `cloud-${provider.id}`,
       latency: provider.latency
-    }).then(() => buildProviderReview(provider));
+    }).then(response => {
+      if (response.ok && response.data && response.data.providerId) {
+        return normalizeBackendProviderReview(response.data, provider);
+      }
+      return buildProviderReview(provider);
+    });
   });
 
   Promise.all(reviewCalls).then(reviews => {
@@ -1694,8 +1756,25 @@ function runAiDebateForPlans() {
     saveDataRecord("evaluation.aiDebate", state.aiDebate);
     renderAiDebate();
     evaluatePlansRealtime();
-    enqueueLog("eval", "三家云端 AI Provider 对抗评审完成，Switch 已汇总共识分并回写评估面板。");
+    enqueueLog("eval", "多角度智能复核完成，已汇总共识分并更新评估结果。");
   });
+}
+
+function normalizeBackendProviderReview(data, provider) {
+  return {
+    providerId: data.providerId || provider.id,
+    providerName: provider.displayName || provider.name,
+    role: provider.displayRole || provider.role,
+    latency: provider.latency,
+    planScores: (data.scores || []).map(item => ({
+      idx: item.idx,
+      planName: item.planName,
+      score: item.score,
+      macroFit: item.score,
+      executionFit: item.score
+    })),
+    note: data.note || "复核完成。"
+  };
 }
 
 function renderAiDebate(isLoading = false) {
@@ -1703,16 +1782,16 @@ function renderAiDebate(isLoading = false) {
   if (!container) return;
 
   if (isLoading) {
-    container.innerHTML = architectureRegistry.cloudProviders.map(provider => `
+    container.innerHTML = serviceRegistry.cloudProviders.map(provider => `
       <article class="ai-review-card">
         <div class="ai-review-head">
           <div>
-            <div class="ai-review-name">${provider.name}</div>
-            <div class="ai-review-role">${provider.role}</div>
+            <div class="ai-review-name">${provider.displayName}</div>
+            <div class="ai-review-role">${provider.displayRole}</div>
           </div>
           <div class="ai-review-latency">pending</div>
         </div>
-        <div class="ai-review-note">正在通过 API Switch 调用 ${provider.shortName} Provider...</div>
+        <div class="ai-review-note">正在进行独立复核...</div>
       </article>
     `).join("");
     return;
@@ -1722,7 +1801,7 @@ function renderAiDebate(isLoading = false) {
     container.innerHTML = `
       <article class="ai-review-card">
         <div class="ai-review-name">等待评估阶段</div>
-        <div class="ai-review-note">进入方案评估后，豆包、千问、DeepSeek 会分别给出对抗评分。</div>
+        <div class="ai-review-note">进入方案评估后，系统会从不同角度复核方案并汇总共识分。</div>
       </article>
     `;
     return;
@@ -1758,7 +1837,7 @@ function getConsensusScoreForPlan(idx) {
   return consensus ? consensus.score : null;
 }
 
-// 步骤 4：实时加权打分与胜出方案推荐 (评估助理的核心功能)
+// 步骤 4：实时加权打分与胜出方案推荐
 function evaluatePlansRealtime() {
   if (!state.plans.length) return;
 
@@ -1828,7 +1907,7 @@ function evaluatePlansRealtime() {
   winnerBanner.innerHTML = `
     <div class="winner-banner-icon">🏆</div>
     <div>
-      <div style="font-weight: 700; color: #10B981; margin-bottom: 0.15rem;">评估助理自动选定方案：${winnerPlan.name}</div>
+      <div style="font-weight: 700; color: #10B981; margin-bottom: 0.15rem;">推荐方案：${winnerPlan.name}</div>
       <div style="color: var(--text-secondary); line-height: 1.4;">
         在您当前的评估指标下，该方案表现最优。时令匹配度为 ${winnerPlan.scores.season}%，
         地域风味匹配度为 ${winnerPlan.scores.region}%${winnerConsensus === null ? "" : `，多 AI 共识分为 ${winnerConsensus} 分`}，能够最大程度满足预算与适宜性。
@@ -1864,10 +1943,10 @@ function generateMarketingTexts() {
   };
 
   // 1. 小红书软文
-  const xhsText = `🔥 夏季狂掉秤！多智能体帮我制定的【${templateParams.PlanName}】真的绝了！✨
+  const xhsText = `🔥 夏季清爽健康餐【${templateParams.PlanName}】真的很适合坚持！✨
 
 姐妹们！夏天已经到了，想穿漂亮衣服又管不住嘴？赶紧看过来！
-我刚才用一款【多智能体协同健康饮食规划系统】测试了一下，五个 AI 智能体（客户经理、饮食助理、食材助理、评估助理、营销助理）协同帮我定制了一套【${templateParams.PlanName}】，简直是减脂届的“天花板”！
+我刚才根据自己的身高、体重、活动量、饮食禁忌和地域口味，定制了一套【${templateParams.PlanName}】，热量、营养比例和采购清单都安排好了，执行起来很省心！
 
 📊 每日科学能量配比：
 - 每日预算：${templateParams.Calories} kcal
@@ -1880,13 +1959,13 @@ function generateMarketingTexts() {
 🍎 加餐：${templateParams.Snack}
 
 🛒 连食材采购清单都帮我规划好了，根本不用自己动脑折算！
-这次评估助理还特意帮我筛选了【${templateParams.Region}】口味的当季食材，精打细算既省钱又新鲜，太智能了！
+这次还特意筛选了【${templateParams.Region}】口味的当季食材，精打细算既省钱又新鲜，日常备餐更容易坚持！
 
 别再盲目节食了，科学饮食才能瘦得漂亮！快来Pick你的专属食谱吧！
-#健康减脂 #小红书爆款食谱 #AI智能体 #控糖低卡 #夏季瘦身 #自律打卡 #我的健康生活`;
+#健康减脂 #小红书爆款食谱 #控糖低卡 #夏季瘦身 #自律打卡 #我的健康生活`;
 
   // 2. 抖音脚本
-  const videoText = `🎬 抖音短视频脚本：《AI多智能体帮我吃出好身材》
+  const videoText = `🎬 抖音短视频脚本：《一套能坚持的夏季健康餐》
 
 【BGM】：轻快、动感、充满活力的卡点音乐
 【视频时长】：30秒
@@ -1899,9 +1978,9 @@ function generateMarketingTexts() {
 - 旁白（声调上扬）：夏天要露肉？你还在每天靠水煮菜、啃黄瓜熬着吗？
 
 🎥 【画面 2】
-- 画面：切入手机，特写健康饮食规划仪表盘。多智能体节点脉冲闪烁，底部控制台日志流水般滑过，科技感拉满。
-- 视觉提示：特写显示[饮食助理]和[食材助理]完成数据流传递。
-- 旁白：今天带大家看看我的秘密武器——AI智能体协同帮我制定的【${templateParams.PlanName}】！
+- 画面：切入手机，特写健康饮食规划页面，展示个人画像、热量预算和三餐安排。
+- 视觉提示：显示“已生成专属方案”和“采购清单已就绪”。
+- 旁白：今天带大家看看我的秘密武器——根据个人画像定制的【${templateParams.PlanName}】！
 
 🎥 【画面 3】
 - 画面：快速卡点切入三餐美食特写（香气扑鼻的少油主菜、翠绿的沙拉、五彩谷物饭）。
@@ -1910,7 +1989,7 @@ function generateMarketingTexts() {
 
 🎥 【画面 4】
 - 画面：主角拿着手机食材清单，在超市里开心地挑选新鲜果蔬。
-- 旁白：连食材采购量都帮我自动折算好了。评估助理还针对夏季时令进行成本核算，太懂打工人的钱包了！
+- 旁白：连食材采购量都自动折算好了，还针对夏季时令和预算做了评估，太懂打工人的钱包了！
 
 🎥 【画面 5】
 - 画面：主角微笑，点赞屏幕，屏幕弹出评论区引导。
@@ -1918,13 +1997,13 @@ function generateMarketingTexts() {
 - 旁白：想要同款低卡食谱？关注我，在评论区留下你的身高体重，AI马上帮你算！`;
 
   // 3. 微信公众号
-  const gzhText = `标题：AI智能体协同规划：如何利用【${templateParams.PlanName}】实现科学健康管理？
+  const gzhText = `标题：如何利用【${templateParams.PlanName}】实现科学健康管理？
 
 引言：
-在健康管理日益个性化的今天，单一的“万能食谱”已无法满足现代人对口味、预算及季节性采购的复杂需求。本文将为您详细拆解由多智能体协同系统生成的【${templateParams.PlanName}】。该方案结合了营养科学、时令食材供应以及地域风味，提供了一套切实可行的膳食改善路径。
+在健康管理日益个性化的今天，单一的“万能食谱”已无法满足现代人对口味、预算及季节性采购的复杂需求。本文将为您详细拆解【${templateParams.PlanName}】。该方案结合了营养科学、时令食材供应以及地域风味，提供了一套切实可行的膳食改善路径。
 
 一、 画像分析与能量代谢指标
-我们的多智能体系统首先通过客户经理收集了您的身体指标，饮食助理基于经典生理学公式为您的活动水平定制了能量摄入。
+系统首先根据身体指标、活动水平和健康目标估算能量摄入，并形成个性化营养结构。
 - 每日能量预算：${templateParams.Calories} kcal
 - 三大宏量营养素配比：碳水 ${templateParams.Carbs}% | 蛋白质 ${templateParams.Protein}% | 脂肪 ${templateParams.Fat}%
 该比例旨在维持基础代谢的同时，通过营养素配比提高食物热效应。
@@ -1940,11 +2019,11 @@ function generateMarketingTexts() {
 4. 加餐 (Snack)：${templateParams.Snack}
    补充微量元素，抑制餐间饥饿感。
 
-三、 食材助理的采购与存储建议
-食材助理根据方案生成了分类食材清单，并给出了针对夏季的高温防霉、储鲜防潮指南，确保食材新鲜度的同时也减少了食物浪费。
+三、 采购与存储建议
+系统根据方案生成了分类食材清单，并给出了针对夏季的高温防霉、储鲜防潮指南，确保食材新鲜度的同时也减少了食物浪费。
 
 结语：
-  科学饮食不是折磨，而是一场身体的重塑。通过多智能体协同，我们能让繁琐的营养计算、食材采购和成本评估变得触手可及。欢迎转发分享这套食谱给有需要的朋友！`;
+  科学饮食不是折磨，而是一场身体的重塑。通过个性化规划，我们能让繁琐的营养计算、食材采购和成本评估变得触手可及。欢迎转发分享这套食谱给有需要的朋友！`;
 
   // 填入 DOM 中
   const xhsBox = document.getElementById("copyBoxXhs");
@@ -1978,13 +2057,13 @@ function addSystemLog(tag, message) {
   let tagLabel = "系统";
 
   switch (tag) {
-    case "client": tagClass = "client"; tagLabel = "客户经理"; break;
-    case "diet": tagClass = "diet"; tagLabel = "饮食助理"; break;
-    case "ingredient": tagClass = "ingredient"; tagLabel = "食材助理"; break;
-    case "eval": tagClass = "eval"; tagLabel = "评估助理"; break;
-    case "market": tagClass = "market"; tagLabel = "营销助理"; break;
-    case "switch": tagClass = "switch"; tagLabel = "API Switch"; break;
-    case "data": tagClass = "data"; tagLabel = "数据层"; break;
+    case "client": tagClass = "client"; tagLabel = "画像"; break;
+    case "diet": tagClass = "diet"; tagLabel = "方案"; break;
+    case "ingredient": tagClass = "ingredient"; tagLabel = "清单"; break;
+    case "eval": tagClass = "eval"; tagLabel = "评估"; break;
+    case "market": tagClass = "market"; tagLabel = "文案"; break;
+    case "switch": tagClass = "switch"; tagLabel = "服务"; break;
+    case "data": tagClass = "data"; tagLabel = "保存"; break;
   }
 
   entry.innerHTML = `
@@ -1999,7 +2078,7 @@ function addSystemLog(tag, message) {
   consoleLogs.scrollTop = consoleLogs.scrollHeight;
 }
 
-// 智能体队列打印调度器
+// 处理进度队列打印调度器
 function enqueueLog(tag, message) {
   state.logsQueue.push({ tag, message });
   processLogsQueue();
@@ -2175,7 +2254,7 @@ function startVideoRecording() {
     canvasCtx.fillStyle = '#EC4899';
     canvasCtx.font = 'bold 20px Outfit, "Microsoft YaHei"';
     canvasCtx.textAlign = 'center';
-    canvasCtx.fillText('AI智能体协同健康饮食推荐', 300, 95);
+    canvasCtx.fillText('个性化健康饮食推荐', 300, 95);
 
     // 绘制方案名称
     canvasCtx.fillStyle = '#F3F4F6';
@@ -2238,7 +2317,7 @@ function downloadPublishPackage() {
   }
   
   // 生成抖音定制文案
-  const dyText = `🎬 多智能体协同定制的【${activePlan.name}】公开！每日摄入 ${activePlan.calories} 千卡，营养素配比精细，非常科学！#健康减脂 #小红书爆款食谱 #AI智能体 #控糖低卡 #夏季瘦身 #自律打卡`;
+  const dyText = `🎬 个性化定制的【${activePlan.name}】公开！每日摄入 ${activePlan.calories} 千卡，营养素配比精细，非常科学！#健康减脂 #小红书爆款食谱 #控糖低卡 #夏季瘦身 #自律打卡`;
   
   const xhsBox = document.getElementById("copyBoxXhs");
   const data = {
