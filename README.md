@@ -32,6 +32,9 @@ cp .env.example .env
 主要变量：
 
 ```text
+DIET_PLANNER_DB=backend/diet_planner.db
+CORS_ALLOW_ORIGINS=*
+AUTH_SECRET=replace-with-a-long-random-secret
 DOUBAO_API_KEY=
 QIANWEN_API_KEY=
 DEEPSEEK_API_KEY=
@@ -53,12 +56,20 @@ http://127.0.0.1:8000/
 ## 主要后端接口
 
 - `GET /api/v1/health`
+- `POST /api/v1/auth/register`
+- `POST /api/v1/auth/login`
+- `GET /api/v1/auth/me`
+- `PUT /api/v1/auth/me/profile`
 - `POST /api/v1/switch/dispatch`
 - `GET /api/v1/switch/stats`
 - `GET /api/v1/events`
 - `GET /api/v1/events/stream`
 
 前端默认会探测 `http://127.0.0.1:8000`。后端在线时使用真实 API；后端不可用时自动回退本地流程。
+
+## 用户数据
+
+注册账户会写入 SQLite 的 `users` 表，密码使用 PBKDF2-SHA256 加盐哈希保存。登录后前端会读取该用户数据库中的画像并回填问卷；只有用户再次提交问卷时，才会更新数据库画像。未登录时仍可使用本地浏览器数据完成完整规划流程。
 
 ## 验证命令
 

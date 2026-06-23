@@ -45,6 +45,16 @@ const state = {
     reviews: [],
     consensus: []
   },
+  planConstraints: {
+    pinnedMeals: [],
+    deletedDishes: [],
+    revision: 0
+  },
+  planDiscussion: {
+    agents: [],
+    consensus: "",
+    revision: 0
+  },
   backend: {
     enabled: true,
     online: false,
@@ -52,12 +62,19 @@ const state = {
     lastError: "未检测",
     eventStream: "idle"
   },
+  auth: {
+    token: "",
+    user: null,
+    mode: "login",
+    loading: false
+  },
   apiEvents: []
 };
 
 const STORAGE_KEYS = {
   records: "dietPlannerSevenLayerRecordsV1",
-  apiEvents: "dietPlannerApiEventsV1"
+  apiEvents: "dietPlannerApiEventsV1",
+  authToken: "dietPlannerAuthTokenV1"
 };
 
 const memoryCache = new Map();
@@ -203,6 +220,7 @@ document.addEventListener("DOMContentLoaded", () => {
   initArchitectureRuntime();
   initEventListeners();
   initWeightSliders();
+  initAuthState();
   addSystemLog("system", "系统初始化完成，已准备生成个性化饮食方案。");
   addSystemLog("switch", "正在检查后端服务连接；若服务不可用，将自动使用本地计算流程。");
   addSystemLog("client", "请填写基础健康问卷，系统将生成结构化用户画像。");
@@ -406,10 +424,14 @@ function getBackendBaseUrl() {
 async function sendBackendEnvelope(envelope) {
   const baseUrl = getBackendBaseUrl();
   state.backend.baseUrl = baseUrl;
+  const headers = { "Content-Type": "application/json" };
+  if (state.auth.token) {
+    headers.Authorization = `Bearer ${state.auth.token}`;
+  }
 
   const response = await fetch(`${baseUrl}/api/v1/switch/dispatch`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers,
     body: JSON.stringify(envelope)
   });
 
@@ -439,6 +461,471 @@ async function probeBackend() {
   }
 
   renderApiSwitchMetrics();
+}
+
+function initAuthState() {
+  state.auth.token = localStorage.getItem(STORAGE_KEYS.authToken) || "";
+  state.auth.user = null;
+  state.auth.loading = false;
+  state.auth.mode = "login";
+  renderAuthPanel();
+
+  if (state.auth.token) {
+    refreshCurrentUser({ announce: true });
+  }
+}
+
+function getAuthHeaders() {
+  const headers = { "Content-Type": "application/json" };
+  if (state.auth.token) {
+    headers.Authorization = `Bearer ${state.auth.token}`;
+  }
+  return headers;
+}
+
+async function requestAuth(path, options = {}) {
+  const baseUrl = getBackendBaseUrl();
+  state.backend.baseUrl = baseUrl;
+
+  let response;
+  try {
+    response = await fetch(`${baseUrl}${path}`, {
+      ...options,
+      headers: {
+        ...getAuthHeaders(),
+        ...(options.headers || {})
+      }
+    });
+  } catch (err) {
+    const networkError = new Error("后端服务未连接，无法访问账户数据库");
+    networkError.cause = err;
+    throw networkError;
+  }
+
+  let data = {};
+  try {
+    data = await response.json();
+  } catch (err) {
+    data = {};
+  }
+
+  if (!response.ok) {
+    const message = data.detail || `账户服务 HTTP ${response.status}`;
+    const error = new Error(message);
+    error.status = response.status;
+    throw error;
+  }
+
+  state.backend.online = true;
+  state.backend.lastError = "";
+  renderApiSwitchMetrics();
+  return data;
+}
+
+function setAuthMode(mode) {
+  state.auth.mode = mode === "register" ? "register" : "login";
+  renderAuthPanel();
+}
+
+function setAuthMessage(message, type = "info") {
+  const messageEl = document.getElementById("authMessage");
+  if (!messageEl) return;
+  messageEl.innerText = message || "";
+  messageEl.dataset.type = type;
+}
+
+function renderAuthPanel() {
+  const guestPanel = document.getElementById("authGuestPanel");
+  const userPanel = document.getElementById("authUserPanel");
+  const displayNameGroup = document.getElementById("authDisplayNameGroup");
+  const submitBtn = document.getElementById("authSubmitBtn");
+  const userName = document.getElementById("authUserName");
+  const userEmail = document.getElementById("authUserEmail");
+  const profileStatus = document.getElementById("authProfileStatus");
+
+  const isLoggedIn = Boolean(state.auth.user);
+  if (guestPanel) guestPanel.hidden = isLoggedIn;
+  if (userPanel) userPanel.hidden = !isLoggedIn;
+
+  document.querySelectorAll("[data-auth-mode]").forEach(btn => {
+    btn.classList.toggle("active", btn.dataset.authMode === state.auth.mode);
+  });
+
+  if (displayNameGroup) {
+    displayNameGroup.hidden = state.auth.mode !== "register";
+  }
+
+  if (submitBtn) {
+    submitBtn.disabled = state.auth.loading;
+    submitBtn.innerText = state.auth.loading
+      ? "处理中..."
+      : (state.auth.mode === "register" ? "注册并登录" : "登录账户");
+  }
+
+  if (isLoggedIn) {
+    const user = state.auth.user;
+    if (userName) userName.innerText = user.displayName || "已登录用户";
+    if (userEmail) userEmail.innerText = user.email || "";
+    if (profileStatus) {
+      profileStatus.innerText = hasStoredProfile(user.profile)
+        ? `数据库画像已保存 · ${formatDateTime(user.updatedAt)}`
+        : "数据库中暂无画像，提交问卷后会保存";
+    }
+  }
+}
+
+function hasStoredProfile(profile) {
+  return Boolean(profile && typeof profile === "object" && Object.keys(profile).length > 0);
+}
+
+function formatDateTime(value) {
+  if (!value) return "未记录";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "未记录";
+  return date.toLocaleString("zh-CN", {
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit"
+  });
+}
+
+async function handleAuthSubmit(event) {
+  event.preventDefault();
+  if (state.auth.loading) return;
+
+  const emailInput = document.getElementById("authEmail");
+  const passwordInput = document.getElementById("authPassword");
+  const displayNameInput = document.getElementById("authDisplayName");
+  const email = emailInput?.value.trim();
+  const password = passwordInput?.value || "";
+  const displayName = displayNameInput?.value.trim();
+
+  if (!email || !password || (state.auth.mode === "register" && !displayName)) {
+    setAuthMessage("请完整填写账户信息", "error");
+    return;
+  }
+
+  state.auth.loading = true;
+  renderAuthPanel();
+  setAuthMessage("");
+
+  try {
+    const path = state.auth.mode === "register" ? "/api/v1/auth/register" : "/api/v1/auth/login";
+    const payload = state.auth.mode === "register"
+      ? { email, password, displayName, profile: {} }
+      : { email, password };
+    const data = await requestAuth(path, {
+      method: "POST",
+      body: JSON.stringify(payload)
+    });
+
+    state.auth.token = data.token;
+    state.auth.user = data.user;
+    localStorage.setItem(STORAGE_KEYS.authToken, data.token);
+    if (passwordInput) passwordInput.value = "";
+    setAuthMessage("");
+    renderAuthPanel();
+
+    if (applyStoredProfileToForm(data.user.profile)) {
+      addSystemLog("data", "已从数据库读取该用户已有画像，并填回问卷。");
+    } else {
+      addSystemLog("data", "账户已登录；当前用户暂无数据库画像，提交问卷后会写入。");
+    }
+  } catch (err) {
+    setAuthMessage(err.message || "账户请求失败", "error");
+    state.backend.online = false;
+    state.backend.lastError = err.message || "auth unavailable";
+    renderApiSwitchMetrics();
+  } finally {
+    state.auth.loading = false;
+    renderAuthPanel();
+  }
+}
+
+async function refreshCurrentUser(options = {}) {
+  if (!state.auth.token) return;
+
+  try {
+    const data = await requestAuth("/api/v1/auth/me", { method: "GET" });
+    state.auth.user = data.user;
+    renderAuthPanel();
+    if (applyStoredProfileToForm(data.user.profile)) {
+      if (options.announce) {
+        addSystemLog("data", "已加载登录用户，并复用数据库中已有画像。");
+      }
+    } else if (options.announce) {
+      addSystemLog("data", "已加载登录用户；数据库中暂无画像记录。");
+    }
+  } catch (err) {
+    if (err.status === 401) {
+      clearAuthState();
+      setAuthMessage(err.message || "登录已失效", "error");
+    } else {
+      setAuthMessage(err.message || "暂时无法读取账户信息", "error");
+    }
+  }
+}
+
+function clearAuthState() {
+  state.auth.token = "";
+  state.auth.user = null;
+  state.auth.loading = false;
+  localStorage.removeItem(STORAGE_KEYS.authToken);
+  renderAuthPanel();
+}
+
+function handleLogout() {
+  clearAuthState();
+  setAuthMessage("已退出登录", "info");
+  addSystemLog("data", "已退出账户；当前页面数据仍可本地使用。");
+}
+
+async function syncStoredProfileFromDb() {
+  if (!state.auth.token) return;
+  await refreshCurrentUser({ announce: true });
+}
+
+function getCurrentProfileRecordKey() {
+  return state.auth.user ? `profile.user.${state.auth.user.id}` : "profile.current";
+}
+
+function collectHealthFormData() {
+  const allergies = [];
+  document.querySelectorAll("input[name='allergies']:checked").forEach(cb => {
+    allergies.push(cb.value);
+  });
+
+  const dietHabit = document.querySelector("input[name='dietHabit']:checked")?.value || "balanced";
+  const extraProfileText = document.getElementById("freeProfileText")?.value.trim() || "";
+  const extraProfile = extractAdditionalProfile(extraProfileText);
+
+  return {
+    gender: document.getElementById("gender").value,
+    age: parseInt(document.getElementById("age").value),
+    height: parseInt(document.getElementById("height").value),
+    weight: parseInt(document.getElementById("weight").value),
+    goal: document.getElementById("goal").value,
+    activity: document.getElementById("activity").value,
+    dietHabit,
+    region: document.getElementById("region").value,
+    allergies,
+    extraProfileText,
+    extraProfile
+  };
+}
+
+function extractAdditionalProfile(text) {
+  const rawText = (text || "").trim();
+  const result = {
+    rawText,
+    likes: [],
+    avoids: [],
+    preferences: [],
+    habits: [],
+    notes: []
+  };
+  if (!rawText) return result;
+
+  const rules = {
+    avoids: {
+      triggers: ["不吃", "不喜欢", "不能吃", "忌口", "过敏", "避免", "少吃", "戒", "不耐受"],
+      terms: ["香菜", "葱", "姜", "蒜", "辣椒", "海鲜", "虾", "蟹", "贝类", "牛肉", "猪肉", "羊肉", "内脏", "乳制品", "牛奶", "酸奶", "奶酪", "鸡蛋", "坚果", "花生", "麸质", "小麦", "糖", "油炸", "高油", "高盐", "高糖"]
+    },
+    likes: {
+      triggers: ["喜欢", "爱吃", "偏爱", "想吃", "希望吃", "接受", "可以吃"],
+      terms: ["鸡胸肉", "鱼", "虾", "牛肉", "鸡蛋", "豆腐", "豆浆", "酸奶", "燕麦", "玉米", "红薯", "土豆", "米饭", "面", "番茄", "西兰花", "菠菜", "菌菇", "水果", "咖啡", "茶", "清淡", "麻辣", "酸甜", "番茄味"]
+    },
+    preferences: {
+      triggers: ["偏好", "口味", "尽量", "需要", "倾向", "希望", "目标", "预算", "方便", "快速", "简单"],
+      terms: ["清淡", "少油", "少盐", "少糖", "低糖", "低脂", "低碳", "低 GI", "高蛋白", "高纤维", "控糖", "减脂", "增肌", "均衡", "中式", "西式", "日式", "地中海", "快手", "便当", "外卖", "低预算", "省钱"]
+    },
+    habits: {
+      triggers: ["经常", "通常", "每天", "每周", "工作日", "周末", "早餐", "午餐", "晚餐", "加班", "运动", "健身", "跑步", "睡眠", "作息", "通勤", "带饭", "公司"],
+      terms: ["久坐", "加班", "带饭", "外食", "外卖", "食堂", "早餐少", "夜宵", "健身", "跑步", "力量训练", "游泳", "瑜伽", "睡得晚", "通勤", "公司吃", "周末运动"]
+    }
+  };
+
+  splitProfileSentences(rawText).forEach(sentence => {
+    let classified = false;
+    Object.entries(rules).forEach(([key, rule]) => {
+      const matched = rule.triggers.some(trigger => sentence.includes(trigger))
+        || rule.terms.some(term => sentence.includes(term));
+      if (!matched) return;
+      classified = true;
+      addExtractedTerms(result[key], sentence, rule.terms);
+    });
+
+    if (!classified) {
+      result.notes.push(sentence);
+    }
+  });
+
+  Object.keys(result).forEach(key => {
+    if (Array.isArray(result[key])) {
+      result[key] = Array.from(new Set(result[key])).slice(0, 8);
+    }
+  });
+
+  return result;
+}
+
+function splitProfileSentences(text) {
+  return text
+    .split(/[，,。；;！!？?\n]/)
+    .map(item => item.trim())
+    .filter(Boolean);
+}
+
+function addExtractedTerms(target, sentence, terms) {
+  const matchedTerms = terms.filter(term => sentence.includes(term));
+  if (matchedTerms.length > 0) {
+    target.push(...matchedTerms);
+  } else {
+    target.push(sentence);
+  }
+}
+
+function renderAdditionalProfilePreview(extracted = null) {
+  const container = document.getElementById("profileExtractPreview");
+  if (!container) return;
+
+  const data = extracted || extractAdditionalProfile(document.getElementById("freeProfileText")?.value || "");
+  const groups = [
+    { key: "likes", label: "喜好" },
+    { key: "avoids", label: "忌口" },
+    { key: "preferences", label: "偏好" },
+    { key: "habits", label: "习惯" },
+    { key: "notes", label: "备注" }
+  ].filter(group => data[group.key]?.length > 0);
+
+  container.innerHTML = "";
+  if (groups.length === 0) {
+    const empty = document.createElement("div");
+    empty.className = "profile-extract-empty";
+    empty.innerText = "暂无补充信息";
+    container.appendChild(empty);
+    return;
+  }
+
+  groups.forEach(group => {
+    const card = document.createElement("div");
+    card.className = "profile-extract-card";
+
+    const title = document.createElement("strong");
+    title.innerText = group.label;
+    const content = document.createElement("span");
+    content.innerText = data[group.key].join("、");
+
+    card.appendChild(title);
+    card.appendChild(content);
+    container.appendChild(card);
+  });
+}
+
+function handleExtractProfileText(options = {}) {
+  const text = document.getElementById("freeProfileText")?.value || "";
+  const extracted = extractAdditionalProfile(text);
+  renderAdditionalProfilePreview(extracted);
+  saveDataRecord("profile.extra.draft", extracted);
+  if (options.announce) {
+    addSystemLog("client", extracted.rawText ? "补充信息已提取，将随用户画像提供给后续 Agent。" : "补充信息已清空。");
+  }
+  return extracted;
+}
+
+function hasAdditionalProfile(extracted) {
+  if (!extracted) return false;
+  return Boolean(
+    extracted.rawText
+    || extracted.likes?.length
+    || extracted.avoids?.length
+    || extracted.preferences?.length
+    || extracted.habits?.length
+    || extracted.notes?.length
+  );
+}
+
+function buildExtraProfileSummary(extracted) {
+  if (!hasAdditionalProfile(extracted)) return "无";
+  const parts = [
+    ["喜好", extracted.likes],
+    ["忌口", extracted.avoids],
+    ["偏好", extracted.preferences],
+    ["习惯", extracted.habits],
+    ["备注", extracted.notes]
+  ]
+    .filter(([, values]) => values?.length > 0)
+    .map(([label, values]) => `${label}:${values.slice(0, 3).join("、")}`);
+  return parts.length > 0 ? parts.join(" | ") : extracted.rawText.slice(0, 60);
+}
+
+function applyStoredProfileToForm(profile) {
+  if (!hasStoredProfile(profile)) return false;
+
+  const fieldIds = ["gender", "age", "height", "weight", "goal", "activity", "region"];
+  fieldIds.forEach(id => {
+    const input = document.getElementById(id);
+    if (input && profile[id] !== undefined && profile[id] !== null) {
+      input.value = profile[id];
+    }
+  });
+
+  const rangeDisplays = {
+    age: "ageVal",
+    height: "heightVal",
+    weight: "weightVal"
+  };
+  Object.entries(rangeDisplays).forEach(([fieldId, displayId]) => {
+    const input = document.getElementById(fieldId);
+    const display = document.getElementById(displayId);
+    if (input && display) display.innerText = input.value;
+  });
+
+  if (profile.dietHabit) {
+    const radio = document.querySelector(`input[name='dietHabit'][value='${profile.dietHabit}']`);
+    if (radio) radio.checked = true;
+  }
+
+  const allergies = Array.isArray(profile.allergies) ? profile.allergies : [];
+  document.querySelectorAll("input[name='allergies']").forEach(cb => {
+    cb.checked = allergies.includes(cb.value);
+  });
+
+  const extraProfileText = document.getElementById("freeProfileText");
+  if (extraProfileText) {
+    extraProfileText.value = profile.extraProfileText || profile.extraProfile?.rawText || "";
+    renderAdditionalProfilePreview(profile.extraProfile || extractAdditionalProfile(extraProfileText.value));
+  }
+
+  state.formData = collectHealthFormData();
+  computeEdgeProfile(state.formData);
+  saveDataRecord(getCurrentProfileRecordKey(), state.formData);
+  return true;
+}
+
+async function persistAuthenticatedProfile(profile) {
+  if (!state.auth.token) {
+    addSystemLog("data", "未登录账户，画像仅保存到本地浏览器。");
+    return false;
+  }
+
+  try {
+    const data = await requestAuth("/api/v1/auth/me/profile", {
+      method: "PUT",
+      body: JSON.stringify({ profile })
+    });
+    state.auth.user = data.user;
+    renderAuthPanel();
+    addSystemLog("data", "用户画像已写入数据库；下次登录会直接复用。");
+    return true;
+  } catch (err) {
+    if (err.status === 401) {
+      clearAuthState();
+    }
+    addSystemLog("data", `数据库画像保存失败：${err.message || "账户服务不可用"}`);
+    return false;
+  }
 }
 
 function startBackendEventStream() {
@@ -549,6 +1036,42 @@ function initEventListeners() {
     });
   }
 
+  document.querySelectorAll("[data-auth-mode]").forEach(btn => {
+    btn.addEventListener("click", () => {
+      setAuthMode(btn.dataset.authMode);
+      setAuthMessage("");
+    });
+  });
+
+  const authForm = document.getElementById("authForm");
+  if (authForm) {
+    authForm.addEventListener("submit", handleAuthSubmit);
+  }
+
+  const logoutBtn = document.getElementById("authLogoutBtn");
+  if (logoutBtn) {
+    logoutBtn.addEventListener("click", handleLogout);
+  }
+
+  const syncProfileBtn = document.getElementById("syncProfileBtn");
+  if (syncProfileBtn) {
+    syncProfileBtn.addEventListener("click", syncStoredProfileFromDb);
+  }
+
+  const extraProfileText = document.getElementById("freeProfileText");
+  if (extraProfileText) {
+    extraProfileText.addEventListener("input", () => {
+      renderAdditionalProfilePreview();
+    });
+  }
+
+  const extractProfileTextBtn = document.getElementById("extractProfileTextBtn");
+  if (extractProfileTextBtn) {
+    extractProfileTextBtn.addEventListener("click", () => {
+      handleExtractProfileText({ announce: true });
+    });
+  }
+
   // 提交问卷按钮
   const submitBtn = document.getElementById("submitFormBtn");
   if (submitBtn) {
@@ -569,6 +1092,11 @@ function initEventListeners() {
       triggerStepTransition(nextStep);
     });
   });
+
+  const regeneratePlansBtn = document.getElementById("regeneratePlansBtn");
+  if (regeneratePlansBtn) {
+    regeneratePlansBtn.addEventListener("click", handleRegeneratePlans);
+  }
 
   // 营销推广 Tab 切换
   document.querySelectorAll(".marketing-tab-btn").forEach(btn => {
@@ -616,10 +1144,13 @@ function initEventListeners() {
       state.plans = [];
       state.activePlanIndex = 0;
       state.selectedPlanIndex = 0;
+      state.planConstraints = { pinnedMeals: [], deletedDishes: [], revision: 0 };
+      state.planDiscussion = { agents: [], consensus: "", revision: 0 };
       document.getElementById("healthForm").reset();
       document.getElementById("ageVal").innerText = "28";
       document.getElementById("heightVal").innerText = "165";
       document.getElementById("weightVal").innerText = "56";
+      renderAdditionalProfilePreview(extractAdditionalProfile(""));
       
       // 重置权重
       state.weights = { cost: 33, season: 33, region: 34 };
@@ -789,7 +1320,9 @@ function triggerStepTransition(targetStep) {
 
     apiSwitch.request("/api/v1/diet/plans", {
       profile: state.formData,
-      edgeCompute: state.edgeCompute
+      edgeCompute: state.edgeCompute,
+      agentContext: state.formData.extraProfile,
+      planConstraints: state.planConstraints
     }, {
       source: "customer-manager",
       target: "diet-planner"
@@ -800,12 +1333,16 @@ function triggerStepTransition(targetStep) {
     enqueueLog("diet", "用户画像已生成。");
     enqueueLog("diet", `目标：${translateGoal(state.formData.goal)} | 饮食风格：${translateHabit(state.formData.dietHabit)}`);
     enqueueLog("diet", `过敏排除食材：${state.formData.allergies.length > 0 ? state.formData.allergies.map(translateAllergy).join('、') : '无'}`);
+    if (hasAdditionalProfile(state.formData.extraProfile)) {
+      enqueueLog("diet", `补充参考：${buildExtraProfileSummary(state.formData.extraProfile)}`);
+    }
     enqueueLog("diet", "基于 Mifflin-St Jeor 公式计算能量代谢...");
     
     // 计算并生成饮食数据
-    calculateAndGenerateDietData();
+    calculateAndGenerateDietData({ reason: "initial" });
 
     enqueueLog("diet", `计算完成。基础代谢(BMR) ≈ ${state.bmr} kcal，日消耗(TDEE) ≈ ${state.tdee} kcal。每日饮食热量靶点设定。`);
+    enqueueLog("diet", `多 Agent 讨论结论：${state.planDiscussion.consensus}`);
     enqueueLog("diet", `已成功为您定制了3套侧重点不同的健康饮食方案：\n1. ${state.plans[0].name}\n2. ${state.plans[1].name}\n3. ${state.plans[2].name}`);
     enqueueLog("diet", "膳食方案已生成，下一步将拆解为采购清单。");
     saveDataRecord("diet.plans.current", state.plans);
@@ -820,7 +1357,8 @@ function triggerStepTransition(targetStep) {
 
     apiSwitch.request("/api/v1/ingredients/list", {
       activePlanIndex: state.activePlanIndex,
-      plans: state.plans.map(plan => ({ name: plan.name, meals: plan.meals }))
+      plans: state.plans.map(plan => ({ name: plan.name, meals: plan.meals })),
+      agentContext: state.formData.extraProfile
     }, {
       source: "diet-planner",
       target: "ingredient-planner"
@@ -852,7 +1390,8 @@ function triggerStepTransition(targetStep) {
 
     apiSwitch.request("/api/v1/evaluation/score", {
       weights: state.weights,
-      plans: state.plans.map(plan => ({ name: plan.name, scores: plan.scores }))
+      plans: state.plans.map(plan => ({ name: plan.name, scores: plan.scores })),
+      agentContext: state.formData.extraProfile
     }, {
       source: "ingredient-planner",
       target: "evaluation-engine"
@@ -877,7 +1416,8 @@ function triggerStepTransition(targetStep) {
 
     apiSwitch.request("/api/v1/marketing/content", {
       selectedPlanIndex: state.selectedPlanIndex,
-      selectedPlan: state.plans[state.selectedPlanIndex]
+      selectedPlan: state.plans[state.selectedPlanIndex],
+      agentContext: state.formData.extraProfile
     }, {
       source: "evaluation-engine",
       target: "marketing-writer"
@@ -905,31 +1445,23 @@ function handleFormSubmit() {
     return;
   }
 
-  // 抓取表单数据
-  const allergies = [];
-  document.querySelectorAll("input[name='allergies']:checked").forEach(cb => {
-    allergies.push(cb.value);
-  });
-
-  state.formData = {
-    gender: document.getElementById("gender").value,
-    age: parseInt(document.getElementById("age").value),
-    height: parseInt(document.getElementById("height").value),
-    weight: parseInt(document.getElementById("weight").value),
-    goal: document.getElementById("goal").value,
-    activity: document.getElementById("activity").value,
-    dietHabit: document.querySelector("input[name='dietHabit']:checked").value,
-    region: document.getElementById("region").value,
-    allergies: allergies
-  };
+  state.formData = collectHealthFormData();
+  renderAdditionalProfilePreview(state.formData.extraProfile);
+  state.planConstraints = { pinnedMeals: [], deletedDishes: [], revision: 0 };
+  state.planDiscussion = { agents: [], consensus: "", revision: 0 };
 
   computeEdgeProfile(state.formData);
-  saveDataRecord("profile.current", state.formData);
+  saveDataRecord(getCurrentProfileRecordKey(), state.formData);
+  saveDataRecord("profile.extra.current", state.formData.extraProfile);
+  persistAuthenticatedProfile(state.formData);
   apiSwitch.request("/api/v1/profile/create", state.formData, {
     source: "ui-controller",
     target: "customer-manager"
   });
   enqueueLog("data", "用户画像已保存，后续步骤可继续复用。");
+  if (hasAdditionalProfile(state.formData.extraProfile)) {
+    enqueueLog("client", "补充文本与提取结果已加入用户画像。");
+  }
   enqueueLog("switch", "画像创建请求已进入处理队列。");
 
   // 开启流转动画，进入膳食方案生成
@@ -937,7 +1469,7 @@ function handleFormSubmit() {
 }
 
 // 计算代谢消耗并产生模拟的饮食方案数据 (与用户输入深度动态关联)
-function calculateAndGenerateDietData() {
+function calculateAndGenerateDietData(options = {}) {
   const f = state.formData;
   
   // 1. 代谢计算 (BMR & TDEE)
@@ -1110,6 +1642,300 @@ function calculateAndGenerateDietData() {
       }
     }
   ];
+
+  finalizeGeneratedPlans(options);
+}
+
+function finalizeGeneratedPlans(options = {}) {
+  state.plans.forEach((plan, planIndex) => {
+    plan.meals = plan.meals.map((meal, mealIndex) => ({
+      ...meal,
+      id: meal.id || createMealId(planIndex, meal.name, mealIndex),
+      deleted: false,
+      replacedByAgent: false
+    }));
+  });
+
+  applyPlanConstraintsToGeneratedPlans();
+
+  state.plans.forEach((plan, planIndex) => {
+    plan.agentScore = calculatePlanAgentScore(plan, planIndex);
+    plan.agentNotes = buildPlanAgentNotes(plan);
+    plan.ingredients = buildIngredientsFromMeals(plan, state.formData);
+  });
+
+  state.planDiscussion = buildPlanGenerationDiscussion(options);
+  saveDataRecord("diet.planDiscussion.current", state.planDiscussion);
+}
+
+function createMealId(planIndex, mealName, mealIndex) {
+  return `plan-${planIndex}-${mealIndex}-${mealName}`;
+}
+
+function createConstraintId(type) {
+  return `${type}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`;
+}
+
+function normalizeDishText(value) {
+  return String(value || "")
+    .replace(/\s+/g, "")
+    .replace(/[()（）[\]【】,，.。;；:：]/g, "")
+    .toLowerCase();
+}
+
+function findPinnedMeal(planIndex, mealName) {
+  return state.planConstraints.pinnedMeals.find(item => (
+    item.planIndex === planIndex && item.mealName === mealName
+  ));
+}
+
+function isMealPinned(planIndex, mealName) {
+  return Boolean(findPinnedMeal(planIndex, mealName));
+}
+
+function dishMatchesDeleted(food) {
+  const normalized = normalizeDishText(food);
+  return state.planConstraints.deletedDishes.some(item => {
+    const deleted = normalizeDishText(item.food);
+    return normalized === deleted || normalized.includes(deleted) || deleted.includes(normalized);
+  });
+}
+
+function getProfileAvoidTerms(profile = state.formData) {
+  const allergyTerms = {
+    seafood: ["海鲜", "虾", "蟹", "贝类", "鲈鱼", "三文鱼", "金枪鱼"],
+    dairy: ["乳制品", "牛奶", "酸奶", "奶酪", "水牛奶酪", "燕麦奶"],
+    nuts: ["坚果", "扁桃仁", "花生"],
+    gluten: ["全麦", "面包", "面条", "小麦", "麸质"],
+    "beef-pork": ["牛肉", "猪肉", "牛腩", "猪里脊"]
+  };
+
+  const terms = [];
+  (profile.allergies || []).forEach(item => {
+    terms.push(...(allergyTerms[item] || []));
+  });
+  terms.push(...(profile.extraProfile?.avoids || []));
+  return Array.from(new Set(terms.filter(Boolean)));
+}
+
+function dishViolatesAvoids(food, profile = state.formData) {
+  const normalized = normalizeDishText(food);
+  return getProfileAvoidTerms(profile).some(term => normalized.includes(normalizeDishText(term)));
+}
+
+function applyPlanConstraintsToGeneratedPlans() {
+  state.plans.forEach((plan, planIndex) => {
+    plan.meals = plan.meals.map((meal, mealIndex) => {
+      const pinned = findPinnedMeal(planIndex, meal.name);
+      if (pinned) {
+        return {
+          ...meal,
+          food: pinned.food,
+          cals: pinned.cals,
+          icon: pinned.icon || meal.icon,
+          id: meal.id || createMealId(planIndex, meal.name, mealIndex),
+          pinned: true,
+          deleted: false,
+          replacedByAgent: false
+        };
+      }
+
+      if (dishMatchesDeleted(meal.food) || dishViolatesAvoids(meal.food)) {
+        const replacement = selectReplacementMeal(planIndex, mealIndex, meal);
+        return {
+          ...meal,
+          ...replacement,
+          id: meal.id || createMealId(planIndex, meal.name, mealIndex),
+          deleted: false,
+          pinned: false,
+          replacedByAgent: true
+        };
+      }
+
+      return {
+        ...meal,
+        id: meal.id || createMealId(planIndex, meal.name, mealIndex),
+        pinned: false
+      };
+    });
+  });
+}
+
+function selectReplacementMeal(planIndex, mealIndex, meal) {
+  const profile = state.formData;
+  const options = getMealReplacementOptions(meal.name, profile, planIndex);
+  const likes = profile.extraProfile?.likes || [];
+  const filtered = options.filter(option => (
+    !dishMatchesDeleted(option)
+    && !dishViolatesAvoids(option, profile)
+    && !state.planConstraints.pinnedMeals.some(item => normalizeDishText(item.food) === normalizeDishText(option))
+  ));
+
+  const likedOptions = filtered.filter(option => (
+    likes.some(like => normalizeDishText(option).includes(normalizeDishText(like)))
+  ));
+  const candidates = likedOptions.length ? likedOptions : filtered;
+  const fallback = profile.dietHabit === "vegan"
+    ? "豆腐菌菇时蔬碗 + 少量藜麦"
+    : "香煎鸡胸时蔬碗 + 少量糙米";
+  const list = candidates.length ? candidates : [fallback];
+  const offset = (state.planConstraints.revision + planIndex + mealIndex) % list.length;
+
+  return {
+    food: list[offset],
+    cals: meal.cals
+  };
+}
+
+function getMealReplacementOptions(mealName, profile, planIndex) {
+  const avoidDairy = profile.allergies?.includes("dairy");
+  const avoidGluten = profile.allergies?.includes("gluten");
+  const isVegan = profile.dietHabit === "vegan";
+  const protein = isVegan ? "香煎豆腐" : "去皮鸡胸肉";
+  const drink = avoidDairy || isVegan ? "无糖豆浆" : "低脂酸奶";
+  const grain = avoidGluten ? "藜麦饭" : "全麦饭团";
+  const regionFlavor = {
+    south: ["清蒸", "白灼", "荷塘"],
+    north: ["番茄炖", "葱香", "杂粮"],
+    sichuan: ["椒麻少油", "鲜椒", "凉拌"],
+    western: ["香草柠檬", "番茄罗勒", "藜麦沙拉"]
+  }[profile.region] || ["清爽"];
+
+  const breakfast = [
+    `${drink}1杯 + ${avoidGluten ? "蒸紫薯" : "燕麦"} + ${isVegan ? "卤水豆腐" : "水煮蛋"}`,
+    `${grain} + 圣女果 + ${drink}`,
+    `${isVegan ? "鹰嘴豆泥" : "鸡蛋蔬菜卷"} + 黄瓜条 + 无糖茶`
+  ];
+  const lunch = [
+    `${regionFlavor[0]}${protein}配西兰花 + ${avoidGluten ? "糙米饭" : "杂粮饭"}`,
+    `${regionFlavor[1] || "清炒"}菌菇时蔬 + ${isVegan ? "毛豆" : "鸡肉丁"}`,
+    `番茄豆腐${isVegan ? "鹰嘴豆" : "鸡肉"}碗 + 凉拌黄瓜`
+  ];
+  const dinner = [
+    `${regionFlavor[2] || "清爽"}时蔬汤 + ${protein}`,
+    `番茄菌菇豆腐汤 + ${avoidGluten ? "玉米" : "小份杂粮面"}`,
+    `${isVegan ? "豆腐藜麦沙拉" : "柠檬鸡肉沙拉"} + 水煮菜心`
+  ];
+  const snack = [
+    "小番茄 + 无糖茶",
+    avoidDairy || isVegan ? "无糖椰子酸奶" : "希腊酸奶",
+    "苹果半个 + 黄瓜条"
+  ];
+
+  if (mealName.includes("早餐")) return breakfast;
+  if (mealName.includes("午餐")) return lunch;
+  if (mealName.includes("晚餐")) return dinner;
+  return snack;
+}
+
+function calculatePlanAgentScore(plan, planIndex) {
+  const mealsText = plan.meals.map(meal => meal.food).join(" ");
+  const calorieFit = clampScore(100 - Math.abs((plan.calories || 0) - (state.targetCalories || plan.calories)) / 12);
+  const likeCount = (state.formData.extraProfile?.likes || []).filter(term => mealsText.includes(term)).length;
+  const avoidCount = getProfileAvoidTerms().filter(term => mealsText.includes(term)).length;
+  const pinnedMatches = state.planConstraints.pinnedMeals.filter(item => item.planIndex === planIndex).length;
+  const deletedViolations = state.planConstraints.deletedDishes.filter(item => mealsText.includes(item.food)).length;
+  const preferenceFit = clampScore(78 + likeCount * 6 - avoidCount * 10 - deletedViolations * 18);
+  const executionFit = clampScore((plan.scores.cost * 0.36) + (plan.scores.season * 0.34) + (plan.scores.region * 0.3) + pinnedMatches * 3);
+  return clampScore(calorieFit * 0.36 + preferenceFit * 0.32 + executionFit * 0.32);
+}
+
+function buildPlanAgentNotes(plan) {
+  const replacements = plan.meals.filter(meal => meal.replacedByAgent).length;
+  if (replacements > 0) return `已按删除/忌口约束替换 ${replacements} 道菜`;
+  if (plan.agentScore >= 88) return "营养、偏好和执行约束匹配较高";
+  return "可继续通过固定或删除菜品细化";
+}
+
+function buildPlanGenerationDiscussion(options = {}) {
+  const pinnedCount = state.planConstraints.pinnedMeals.length;
+  const deletedCount = state.planConstraints.deletedDishes.length;
+  const extraText = hasAdditionalProfile(state.formData.extraProfile)
+    ? buildExtraProfileSummary(state.formData.extraProfile)
+    : "无额外文本";
+  const bestPlan = state.plans.reduce((best, plan) => (
+    !best || plan.agentScore > best.agentScore ? plan : best
+  ), null);
+
+  const agents = [
+    {
+      name: "营养约束 Agent",
+      role: "热量、宏量营养、过敏安全",
+      opinion: `以 ${state.targetCalories || "--"} kcal 为目标，优先排除过敏/忌口项，并检查蛋白、碳水、脂肪比例。`
+    },
+    {
+      name: "偏好体验 Agent",
+      role: "口味、生活习惯、执行难度",
+      opinion: `参考补充信息：${extraText}。保留用户喜欢且易执行的餐次，降低重复和不爱吃食材。`
+    },
+    {
+      name: "约束协调 Agent",
+      role: "固定菜品、删除菜品、重新生成策略",
+      opinion: `当前固定 ${pinnedCount} 道菜，删除 ${deletedCount} 道菜；固定项优先保留，删除项进入全局排除列表。`
+    }
+  ];
+
+  const consensus = bestPlan
+    ? `第 ${state.planConstraints.revision + 1} 轮讨论完成，当前共识最高的是「${bestPlan.name}」（${bestPlan.agentScore} 分）。${options.reason === "regenerate" ? "本轮已按固定与删除约束重新生成。" : "初始方案已生成，可继续固定或删除菜品细化。"}`
+    : "等待生成方案。";
+
+  return {
+    agents,
+    consensus,
+    revision: state.planConstraints.revision,
+    reason: options.reason || "initial",
+    updatedAt: new Date().toISOString()
+  };
+}
+
+function buildIngredientsFromMeals(plan, profile) {
+  const text = plan.meals.map(meal => meal.food).join(" ");
+  const matchCatalog = (catalog, fallback) => {
+    const items = catalog
+      .filter(item => item.keys.some(key => text.includes(key)))
+      .map(item => ({ name: item.name, qty: item.qty }));
+    return items.length ? uniqueIngredientItems(items).slice(0, 4) : fallback;
+  };
+
+  return {
+    meat: matchCatalog([
+      { keys: ["鸡胸", "鸡肉", "鸡丁", "蒸鸡"], name: "去皮鸡胸肉", qty: "180g" },
+      { keys: ["豆腐", "素鸡"], name: "北豆腐/素鸡", qty: "180g" },
+      { keys: ["鸡蛋", "水煮蛋"], name: "柴鸡蛋", qty: "1个" },
+      { keys: ["牛肉", "牛腩"], name: "牛肉", qty: "120g" },
+      { keys: ["鱼", "鲈鱼", "三文鱼", "金枪鱼"], name: "鱼类蛋白", qty: "150g" },
+      { keys: ["虾"], name: "虾仁", qty: "100g" },
+      { keys: ["鹰嘴豆", "毛豆"], name: "豆类蛋白", qty: "120g" }
+    ], profile.dietHabit === "vegan" ? [{ name: "豆腐/豆类", qty: "180g" }] : [{ name: "去皮鸡胸肉", qty: "180g" }]),
+    veggies: matchCatalog([
+      { keys: ["西兰花"], name: "西兰花", qty: "150g" },
+      { keys: ["番茄", "圣女果", "小番茄"], name: "番茄", qty: "150g" },
+      { keys: ["黄瓜"], name: "黄瓜", qty: "150g" },
+      { keys: ["菌菇", "香菇", "蘑菇"], name: "菌菇", qty: "100g" },
+      { keys: ["菜心", "生菜", "时蔬"], name: "时令绿叶菜", qty: "200g" },
+      { keys: ["木耳"], name: "黑木耳", qty: "30g" }
+    ], [{ name: "时令蔬菜", qty: "350g" }]),
+    grains: matchCatalog([
+      { keys: ["燕麦"], name: "燕麦", qty: "50g" },
+      { keys: ["紫薯", "红薯"], name: "薯类主食", qty: "150g" },
+      { keys: ["糙米", "杂粮", "藜麦"], name: "杂粮/藜麦", qty: "80g" },
+      { keys: ["玉米"], name: "玉米", qty: "1根" },
+      { keys: ["面包", "全麦"], name: "全麦制品", qty: "60g" }
+    ], [{ name: profile.allergies?.includes("gluten") ? "藜麦/玉米" : "杂粮主食", qty: "80g" }]),
+    seasonings: [
+      { name: "橄榄油/亚麻籽油", qty: "10ml" },
+      { name: "低钠盐/香醋/黑胡椒", qty: "少量" }
+    ]
+  };
+}
+
+function uniqueIngredientItems(items) {
+  const seen = new Set();
+  return items.filter(item => {
+    if (seen.has(item.name)) return false;
+    seen.add(item.name);
+    return true;
+  });
 }
 
 function getPlanBlueprints(goal, dietHabit) {
@@ -1457,6 +2283,14 @@ function renderProfileSummary() {
     }
   ];
 
+  if (hasAdditionalProfile(f.extraProfile)) {
+    profileItems.push({
+      label: "补充参考",
+      value: buildExtraProfileSummary(f.extraProfile),
+      meta: "已同步给后续 Agent"
+    });
+  }
+
   container.innerHTML = profileItems.map(item => `
     <article class="profile-summary-card">
       <span class="profile-summary-label">${item.label}</span>
@@ -1469,6 +2303,7 @@ function renderProfileSummary() {
 // 步骤 2：渲染饮食方案
 function renderDietPlans() {
   renderProfileSummary();
+  renderPlanAgentPanel();
 
   const container = document.getElementById("plansSelectorTabs");
   container.innerHTML = "";
@@ -1479,6 +2314,7 @@ function renderDietPlans() {
     tab.innerHTML = `
       <div class="plan-tab-title">${plan.name}</div>
       <div class="plan-tab-sub">${plan.calories} kcal | ${plan.sub}</div>
+      <div class="plan-tab-score">Agent 共识 ${plan.agentScore || "--"} 分</div>
     `;
     tab.addEventListener("click", () => {
       state.activePlanIndex = idx;
@@ -1496,6 +2332,199 @@ function renderDietPlans() {
   showPlanDetails(state.activePlanIndex);
 }
 
+function renderPlanAgentPanel() {
+  renderPlanConstraintList();
+  const grid = document.getElementById("planDiscussionGrid");
+  if (!grid) return;
+
+  grid.innerHTML = "";
+  const discussion = state.planDiscussion;
+  if (!discussion.agents?.length) {
+    const empty = document.createElement("div");
+    empty.className = "plan-agent-consensus";
+    empty.innerText = "提交问卷后，多 Agent 会基于画像、偏好、固定菜品和删除菜品给出方案。";
+    grid.appendChild(empty);
+    return;
+  }
+
+  discussion.agents.forEach(agent => {
+    const card = document.createElement("article");
+    card.className = "plan-agent-card";
+    const name = document.createElement("strong");
+    name.innerText = agent.name;
+    const role = document.createElement("span");
+    role.innerText = agent.role;
+    const opinion = document.createElement("p");
+    opinion.innerText = agent.opinion;
+    card.appendChild(name);
+    card.appendChild(role);
+    card.appendChild(opinion);
+    grid.appendChild(card);
+  });
+
+  const consensus = document.createElement("div");
+  consensus.className = "plan-agent-consensus";
+  consensus.innerText = discussion.consensus;
+  grid.appendChild(consensus);
+}
+
+function renderPlanConstraintList() {
+  const container = document.getElementById("planConstraintList");
+  if (!container) return;
+
+  container.innerHTML = "";
+  const constraints = [
+    ...state.planConstraints.pinnedMeals.map(item => ({ ...item, type: "fixed", label: "固定" })),
+    ...state.planConstraints.deletedDishes.map(item => ({ ...item, type: "deleted", label: "删除" }))
+  ];
+
+  if (!constraints.length) {
+    const empty = document.createElement("span");
+    empty.className = "constraint-empty";
+    empty.innerText = "暂无固定或删除菜品";
+    container.appendChild(empty);
+    return;
+  }
+
+  constraints.forEach(item => {
+    const chip = document.createElement("span");
+    chip.className = `constraint-chip ${item.type}`;
+    const text = document.createElement("span");
+    text.innerText = `${item.label}：${item.mealName || "菜品"} · ${item.food}`;
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.innerText = "×";
+    btn.title = "移除约束";
+    btn.addEventListener("click", () => removePlanConstraint(item.type, item.id));
+    chip.appendChild(text);
+    chip.appendChild(btn);
+    container.appendChild(chip);
+  });
+}
+
+function persistPlanConstraints() {
+  saveDataRecord("diet.planConstraints.current", state.planConstraints);
+}
+
+function togglePinnedMeal(planIndex, mealIndex) {
+  const plan = state.plans[planIndex];
+  const meal = plan?.meals?.[mealIndex];
+  if (!plan || !meal || meal.deleted) return;
+
+  const existingIndex = state.planConstraints.pinnedMeals.findIndex(item => (
+    item.planIndex === planIndex && item.mealName === meal.name
+  ));
+
+  if (existingIndex >= 0) {
+    const [removed] = state.planConstraints.pinnedMeals.splice(existingIndex, 1);
+    addSystemLog("diet", `已取消固定菜品：${removed.food}`);
+  } else {
+    state.planConstraints.pinnedMeals.push({
+      id: createConstraintId("pin"),
+      planIndex,
+      planName: plan.name,
+      mealName: meal.name,
+      food: meal.food,
+      cals: meal.cals,
+      icon: meal.icon,
+      pinnedAt: new Date().toISOString()
+    });
+    addSystemLog("diet", `已固定【${meal.name}】：${meal.food}。重新生成时将保留该菜品。`);
+  }
+
+  persistPlanConstraints();
+  renderPlanAgentPanel();
+  showPlanDetails(planIndex);
+}
+
+function markMealDeleted(planIndex, mealIndex) {
+  const plan = state.plans[planIndex];
+  const meal = plan?.meals?.[mealIndex];
+  if (!plan || !meal) return;
+
+  state.planConstraints.pinnedMeals = state.planConstraints.pinnedMeals.filter(item => !(
+    item.planIndex === planIndex && item.mealName === meal.name
+  ));
+
+  const alreadyDeleted = state.planConstraints.deletedDishes.some(item => (
+    normalizeDishText(item.food) === normalizeDishText(meal.food)
+  ));
+  if (!alreadyDeleted) {
+    state.planConstraints.deletedDishes.push({
+      id: createConstraintId("delete"),
+      planIndex,
+      planName: plan.name,
+      mealName: meal.name,
+      food: meal.food,
+      deletedAt: new Date().toISOString()
+    });
+  }
+
+  meal.deleted = true;
+  meal.food = `已删除：${meal.food}`;
+  meal.cals = "待重新生成";
+  addSystemLog("diet", `已删除【${plan.name} - ${meal.name}】，该菜品会在重新生成时排除。`);
+  persistPlanConstraints();
+  renderPlanAgentPanel();
+  showPlanDetails(planIndex);
+}
+
+function removePlanConstraint(type, id) {
+  if (type === "fixed") {
+    state.planConstraints.pinnedMeals = state.planConstraints.pinnedMeals.filter(item => item.id !== id);
+  } else {
+    state.planConstraints.deletedDishes = state.planConstraints.deletedDishes.filter(item => item.id !== id);
+  }
+  addSystemLog("diet", "已移除一个菜品约束。");
+  persistPlanConstraints();
+  renderPlanAgentPanel();
+  renderDietPlans();
+}
+
+function handleRegeneratePlans() {
+  if (!state.formData?.age) {
+    addSystemLog("diet", "请先完成基础问卷，再重新生成方案。");
+    return;
+  }
+
+  const btn = document.getElementById("regeneratePlansBtn");
+  if (btn) {
+    btn.disabled = true;
+    btn.innerText = "讨论中...";
+  }
+
+  state.planConstraints.revision += 1;
+  state.aiDebate = { reviews: [], consensus: [] };
+  addSystemLog("switch", "已提交重新生成请求：携带原画像、补充文本、固定菜品与删除菜品。");
+  addSystemLog("diet", "多 Agent 正在重新讨论膳食方案。");
+
+  apiSwitch.request("/api/v1/diet/plans", {
+    profile: state.formData,
+    edgeCompute: state.edgeCompute,
+    agentContext: state.formData.extraProfile,
+    planConstraints: state.planConstraints,
+    regenerate: true
+  }, {
+    source: "ui-controller",
+    target: "diet-planner",
+    latency: 110
+  });
+
+  setTimeout(() => {
+    calculateAndGenerateDietData({ reason: "regenerate" });
+    state.activePlanIndex = Math.min(state.activePlanIndex, state.plans.length - 1);
+    state.selectedPlanIndex = 0;
+    saveDataRecord("diet.plans.current", state.plans);
+    saveDataRecord("diet.planConstraints.current", state.planConstraints);
+    renderDietPlans();
+    addSystemLog("diet", `重新生成完成：${state.planDiscussion.consensus}`);
+    if (btn) {
+      btn.disabled = false;
+      btn.innerText = "重新生成方案";
+    }
+  }, 650);
+}
+
 // 显示所选方案的三餐与营养配比图表
 function showPlanDetails(idx) {
   const plan = state.plans[idx];
@@ -1510,9 +2539,10 @@ function showPlanDetails(idx) {
 
   mealsContainer.innerHTML = "";
   
-  plan.meals.forEach(meal => {
+  plan.meals.forEach((meal, mealIndex) => {
+    const pinned = isMealPinned(idx, meal.name);
     const card = document.createElement("div");
-    card.className = "meal-card";
+    card.className = `meal-card ${pinned ? "pinned" : ""} ${meal.deleted ? "deleted" : ""}`;
     card.innerHTML = `
       <div class="meal-icon">${meal.icon}</div>
       <div class="meal-details">
@@ -1520,7 +2550,13 @@ function showPlanDetails(idx) {
         <div class="meal-food">${meal.food}</div>
       </div>
       <div class="meal-cals">${meal.cals}</div>
+      <div class="meal-actions">
+        <button type="button" class="meal-tool ${pinned ? "active" : ""}" data-action="pin" ${meal.deleted ? "disabled" : ""}>${pinned ? "已固定" : "固定"}</button>
+        <button type="button" class="meal-tool delete" data-action="delete" ${pinned || meal.deleted ? "disabled" : ""}>删除</button>
+      </div>
     `;
+    card.querySelector("[data-action='pin']")?.addEventListener("click", () => togglePinnedMeal(idx, mealIndex));
+    card.querySelector("[data-action='delete']")?.addEventListener("click", () => markMealDeleted(idx, mealIndex));
     mealsContainer.appendChild(card);
   });
 
@@ -1726,7 +2762,11 @@ function runAiDebateForPlans() {
         name: plan.name,
         macros: plan.macros,
         scores: plan.scores
-      }))
+      })),
+      context: {
+        profile: state.formData,
+        agentContext: state.formData.extraProfile
+      }
     }, {
       source: "evaluation-engine",
       target: `cloud-${provider.id}`,

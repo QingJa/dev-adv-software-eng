@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 from typing import Any, Literal
 from uuid import uuid4
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 
 def utc_now() -> str:
@@ -56,3 +56,51 @@ class HealthResponse(BaseModel):
     version: str
     providerMode: str
     database: str
+
+
+class AuthRegisterRequest(BaseModel):
+    email: str = Field(min_length=3, max_length=254)
+    password: str = Field(min_length=6, max_length=128)
+    displayName: str = Field(min_length=1, max_length=80)
+    profile: dict[str, Any] = Field(default_factory=dict)
+
+    @field_validator("email")
+    @classmethod
+    def normalize_email(cls, value: str) -> str:
+        email = value.strip().lower()
+        if "@" not in email or "." not in email.rsplit("@", 1)[-1]:
+            raise ValueError("请输入有效邮箱地址")
+        return email
+
+    @field_validator("displayName")
+    @classmethod
+    def normalize_display_name(cls, value: str) -> str:
+        display_name = value.strip()
+        if not display_name:
+            raise ValueError("请输入昵称")
+        return display_name
+
+
+class AuthLoginRequest(BaseModel):
+    email: str = Field(min_length=3, max_length=254)
+    password: str = Field(min_length=1, max_length=128)
+
+    @field_validator("email")
+    @classmethod
+    def normalize_email(cls, value: str) -> str:
+        return value.strip().lower()
+
+
+class UserProfileUpdate(BaseModel):
+    profile: dict[str, Any] = Field(default_factory=dict)
+    displayName: str | None = Field(default=None, min_length=1, max_length=80)
+
+    @field_validator("displayName")
+    @classmethod
+    def normalize_display_name(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        display_name = value.strip()
+        if not display_name:
+            raise ValueError("请输入昵称")
+        return display_name

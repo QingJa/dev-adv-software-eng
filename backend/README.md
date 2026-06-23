@@ -38,9 +38,15 @@ Provider request formats:
 ## Main Endpoints
 
 - `GET /api/v1/health`
+- `POST /api/v1/auth/register`
+- `POST /api/v1/auth/login`
+- `GET /api/v1/auth/me`
+- `PUT /api/v1/auth/me/profile`
 - `POST /api/v1/switch/dispatch`
 - `GET /api/v1/switch/stats`
 - `GET /api/v1/events`
 - `GET /api/v1/events/stream`
 
 The frontend sends all business calls through `/api/v1/switch/dispatch` with the shared API envelope.
+
+User accounts are stored in the SQLite `users` table. Passwords are salted PBKDF2-SHA256 hashes. On login, the frontend loads the existing user profile from the database; the profile is updated only when the questionnaire is submitted again.

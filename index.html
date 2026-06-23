@@ -22,6 +22,47 @@
           <span id="themeToggleIcon">☀</span>
         </button>
       </div>
+
+      <section class="auth-panel" aria-label="账户与画像数据">
+        <div class="auth-card" id="authGuestPanel">
+          <div class="auth-tabs" role="tablist" aria-label="账户操作">
+            <button type="button" class="auth-tab active" data-auth-mode="login">登录</button>
+            <button type="button" class="auth-tab" data-auth-mode="register">注册</button>
+          </div>
+
+          <form class="auth-form" id="authForm">
+            <div class="auth-field" id="authDisplayNameGroup" hidden>
+              <label for="authDisplayName">昵称</label>
+              <input id="authDisplayName" type="text" autocomplete="name" maxlength="80">
+            </div>
+            <div class="auth-field">
+              <label for="authEmail">邮箱</label>
+              <input id="authEmail" type="email" autocomplete="email" required>
+            </div>
+            <div class="auth-field">
+              <label for="authPassword">密码</label>
+              <input id="authPassword" type="password" autocomplete="current-password" minlength="6" required>
+            </div>
+            <button type="submit" class="auth-submit" id="authSubmitBtn">登录账户</button>
+            <div class="auth-message" id="authMessage" aria-live="polite"></div>
+          </form>
+        </div>
+
+        <div class="auth-card auth-user-card" id="authUserPanel" hidden>
+          <div class="auth-user-main">
+            <div class="auth-avatar" aria-hidden="true">人</div>
+            <div>
+              <strong id="authUserName">已登录用户</strong>
+              <span id="authUserEmail"></span>
+            </div>
+          </div>
+          <div class="auth-profile-status" id="authProfileStatus">数据库中暂无画像</div>
+          <div class="auth-actions">
+            <button type="button" id="syncProfileBtn">读取画像</button>
+            <button type="button" id="authLogoutBtn">退出</button>
+          </div>
+        </div>
+      </section>
     </aside>
     
     <!-- 主工作区 -->
@@ -164,6 +205,24 @@
               </div>
               
             </div>
+
+            <section class="profile-dialog-panel" aria-label="补充画像信息">
+              <div class="profile-dialog-header">
+                <div>
+                  <h3>补充信息</h3>
+                  <span>Agent 参考文本</span>
+                </div>
+                <button type="button" class="profile-dialog-save" id="extractProfileTextBtn">提取保存</button>
+              </div>
+              <textarea
+                id="freeProfileText"
+                rows="4"
+                placeholder="例如：工作日经常加班，午餐多在公司吃；喜欢清淡和番茄味，不喜欢香菜，尽量少吃辣，周末会跑步。"
+              ></textarea>
+              <div class="profile-extract-grid" id="profileExtractPreview" aria-live="polite">
+                <div class="profile-extract-empty">暂无补充信息</div>
+              </div>
+            </section>
             
             <button type="button" class="action-btn" id="submitFormBtn">
               <span>生成用户画像并流转</span> ➔
@@ -195,6 +254,22 @@
           <div class="profile-summary-grid" id="profileSummary" aria-live="polite">
             <!-- 用户画像摘要 -->
           </div>
+
+          <section class="plan-agent-panel" aria-label="多 Agent 方案讨论">
+            <div class="plan-agent-header">
+              <div>
+                <h3>多 Agent 方案讨论</h3>
+                <span>营养约束、口味偏好、执行成本共同讨论后生成</span>
+              </div>
+              <button type="button" class="regenerate-plans-btn" id="regeneratePlansBtn">重新生成方案</button>
+            </div>
+            <div class="plan-constraint-list" id="planConstraintList">
+              <span class="constraint-empty">暂无固定或删除菜品</span>
+            </div>
+            <div class="plan-discussion-grid" id="planDiscussionGrid">
+              <!-- 动态渲染多 Agent 讨论 -->
+            </div>
+          </section>
           
           <div class="plans-wrapper">
             <!-- 方案快捷选择标签 -->
