@@ -955,6 +955,46 @@ input:focus, select:focus, textarea:focus {
   overflow-wrap: anywhere;
 }
 
+.dish-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+  margin-top: 0.35rem;
+}
+
+.dish-row {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 0.65rem;
+  align-items: center;
+  border: 1px solid rgba(255, 255, 255, 0.045);
+  border-radius: 9px;
+  background: rgba(255, 255, 255, 0.025);
+  padding: 0.45rem 0.5rem;
+}
+
+.dish-row.pinned {
+  border-color: rgba(16, 185, 129, 0.25);
+  background: rgba(16, 185, 129, 0.075);
+}
+
+.dish-row.deleted {
+  border-color: rgba(248, 113, 113, 0.24);
+  background: rgba(127, 29, 29, 0.12);
+}
+
+.dish-name {
+  min-width: 0;
+  color: var(--text-primary);
+  font-size: 0.88rem;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.dish-row.deleted .dish-name {
+  color: #FCA5A5;
+}
+
 .meal-cals {
   font-size: 0.8rem;
   color: var(--text-secondary);
@@ -966,6 +1006,12 @@ input:focus, select:focus, textarea:focus {
 .meal-actions {
   display: inline-flex;
   gap: 0.4rem;
+  flex: 0 0 auto;
+}
+
+.dish-actions {
+  display: inline-flex;
+  gap: 0.35rem;
   flex: 0 0 auto;
 }
 
@@ -1834,6 +1880,14 @@ input:focus, select:focus, textarea:focus {
   }
 
   .meal-actions {
+    width: 100%;
+  }
+
+  .dish-row {
+    grid-template-columns: 1fr;
+  }
+
+  .dish-actions {
     width: 100%;
   }
 

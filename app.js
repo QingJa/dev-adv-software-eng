@@ -46,7 +46,7 @@ const state = {
     consensus: []
   },
   planConstraints: {
-    pinnedMeals: [],
+    pinnedDishes: [],
     deletedDishes: [],
     revision: 0
   },
@@ -1144,7 +1144,7 @@ function initEventListeners() {
       state.plans = [];
       state.activePlanIndex = 0;
       state.selectedPlanIndex = 0;
-      state.planConstraints = { pinnedMeals: [], deletedDishes: [], revision: 0 };
+      state.planConstraints = { pinnedDishes: [], deletedDishes: [], revision: 0 };
       state.planDiscussion = { agents: [], consensus: "", revision: 0 };
       document.getElementById("healthForm").reset();
       document.getElementById("ageVal").innerText = "28";
@@ -1447,7 +1447,7 @@ function handleFormSubmit() {
 
   state.formData = collectHealthFormData();
   renderAdditionalProfilePreview(state.formData.extraProfile);
-  state.planConstraints = { pinnedMeals: [], deletedDishes: [], revision: 0 };
+  state.planConstraints = { pinnedDishes: [], deletedDishes: [], revision: 0 };
   state.planDiscussion = { agents: [], consensus: "", revision: 0 };
 
   computeEdgeProfile(state.formData);
@@ -1683,14 +1683,27 @@ function normalizeDishText(value) {
     .toLowerCase();
 }
 
-function findPinnedMeal(planIndex, mealName) {
-  return state.planConstraints.pinnedMeals.find(item => (
-    item.planIndex === planIndex && item.mealName === mealName
+function splitMealDishes(food) {
+  return String(food || "")
+    .split(/\s*[+＋]\s*/)
+    .map(item => item.trim())
+    .filter(Boolean);
+}
+
+function joinMealDishes(dishes) {
+  return dishes.filter(Boolean).join(" + ");
+}
+
+function findPinnedDish(planIndex, mealName, dishIndex) {
+  return state.planConstraints.pinnedDishes.find(item => (
+    item.planIndex === planIndex
+    && item.mealName === mealName
+    && item.dishIndex === dishIndex
   ));
 }
 
-function isMealPinned(planIndex, mealName) {
-  return Boolean(findPinnedMeal(planIndex, mealName));
+function isDishPinned(planIndex, mealName, dishIndex) {
+  return Boolean(findPinnedDish(planIndex, mealName, dishIndex));
 }
 
 function dishMatchesDeleted(food) {
@@ -1726,49 +1739,41 @@ function dishViolatesAvoids(food, profile = state.formData) {
 function applyPlanConstraintsToGeneratedPlans() {
   state.plans.forEach((plan, planIndex) => {
     plan.meals = plan.meals.map((meal, mealIndex) => {
-      const pinned = findPinnedMeal(planIndex, meal.name);
-      if (pinned) {
-        return {
-          ...meal,
-          food: pinned.food,
-          cals: pinned.cals,
-          icon: pinned.icon || meal.icon,
-          id: meal.id || createMealId(planIndex, meal.name, mealIndex),
-          pinned: true,
-          deleted: false,
-          replacedByAgent: false
-        };
-      }
+      let replacedCount = 0;
+      const dishes = splitMealDishes(meal.food).map((dish, dishIndex) => {
+        const pinned = findPinnedDish(planIndex, meal.name, dishIndex);
+        if (pinned) return pinned.food;
 
-      if (dishMatchesDeleted(meal.food) || dishViolatesAvoids(meal.food)) {
-        const replacement = selectReplacementMeal(planIndex, mealIndex, meal);
-        return {
-          ...meal,
-          ...replacement,
-          id: meal.id || createMealId(planIndex, meal.name, mealIndex),
-          deleted: false,
-          pinned: false,
-          replacedByAgent: true
-        };
-      }
+        if (dishMatchesDeleted(dish) || dishViolatesAvoids(dish)) {
+          replacedCount += 1;
+          return selectReplacementDish(planIndex, mealIndex, dishIndex, meal.name, dish);
+        }
+
+        return dish;
+      });
 
       return {
         ...meal,
+        food: joinMealDishes(dishes),
         id: meal.id || createMealId(planIndex, meal.name, mealIndex),
-        pinned: false
+        pinned: dishes.some((_, dishIndex) => isDishPinned(planIndex, meal.name, dishIndex)),
+        deleted: false,
+        replacedByAgent: replacedCount > 0,
+        replacedDishCount: replacedCount
       };
     });
   });
 }
 
-function selectReplacementMeal(planIndex, mealIndex, meal) {
+function selectReplacementDish(planIndex, mealIndex, dishIndex, mealName, currentDish) {
   const profile = state.formData;
-  const options = getMealReplacementOptions(meal.name, profile, planIndex);
+  const options = getDishReplacementOptions(mealName, profile, planIndex);
   const likes = profile.extraProfile?.likes || [];
   const filtered = options.filter(option => (
     !dishMatchesDeleted(option)
     && !dishViolatesAvoids(option, profile)
-    && !state.planConstraints.pinnedMeals.some(item => normalizeDishText(item.food) === normalizeDishText(option))
+    && normalizeDishText(option) !== normalizeDishText(currentDish)
+    && !state.planConstraints.pinnedDishes.some(item => normalizeDishText(item.food) === normalizeDishText(option))
   ));
 
   const likedOptions = filtered.filter(option => (
@@ -1776,15 +1781,19 @@ function selectReplacementMeal(planIndex, mealIndex, meal) {
   ));
   const candidates = likedOptions.length ? likedOptions : filtered;
   const fallback = profile.dietHabit === "vegan"
-    ? "豆腐菌菇时蔬碗 + 少量藜麦"
-    : "香煎鸡胸时蔬碗 + 少量糙米";
+    ? "豆腐菌菇时蔬碗"
+    : "香煎鸡胸时蔬碗";
   const list = candidates.length ? candidates : [fallback];
-  const offset = (state.planConstraints.revision + planIndex + mealIndex) % list.length;
+  const offset = (state.planConstraints.revision + planIndex + mealIndex + dishIndex) % list.length;
 
-  return {
-    food: list[offset],
-    cals: meal.cals
-  };
+  return list[offset];
+}
+
+function getDishReplacementOptions(mealName, profile, planIndex) {
+  return getMealReplacementOptions(mealName, profile, planIndex)
+    .flatMap(option => splitMealDishes(option))
+    .map(item => item.trim())
+    .filter(Boolean);
 }
 
 function getMealReplacementOptions(mealName, profile, planIndex) {
@@ -1833,22 +1842,25 @@ function calculatePlanAgentScore(plan, planIndex) {
   const calorieFit = clampScore(100 - Math.abs((plan.calories || 0) - (state.targetCalories || plan.calories)) / 12);
   const likeCount = (state.formData.extraProfile?.likes || []).filter(term => mealsText.includes(term)).length;
   const avoidCount = getProfileAvoidTerms().filter(term => mealsText.includes(term)).length;
-  const pinnedMatches = state.planConstraints.pinnedMeals.filter(item => item.planIndex === planIndex).length;
-  const deletedViolations = state.planConstraints.deletedDishes.filter(item => mealsText.includes(item.food)).length;
+  const pinnedMatches = state.planConstraints.pinnedDishes.filter(item => item.planIndex === planIndex).length;
+  const normalizedMealsText = normalizeDishText(mealsText);
+  const deletedViolations = state.planConstraints.deletedDishes.filter(item => (
+    normalizedMealsText.includes(normalizeDishText(item.food))
+  )).length;
   const preferenceFit = clampScore(78 + likeCount * 6 - avoidCount * 10 - deletedViolations * 18);
   const executionFit = clampScore((plan.scores.cost * 0.36) + (plan.scores.season * 0.34) + (plan.scores.region * 0.3) + pinnedMatches * 3);
   return clampScore(calorieFit * 0.36 + preferenceFit * 0.32 + executionFit * 0.32);
 }
 
 function buildPlanAgentNotes(plan) {
-  const replacements = plan.meals.filter(meal => meal.replacedByAgent).length;
-  if (replacements > 0) return `已按删除/忌口约束替换 ${replacements} 道菜`;
+  const replacements = plan.meals.reduce((sum, meal) => sum + (meal.replacedDishCount || 0), 0);
+  if (replacements > 0) return `已按删除/忌口约束替换 ${replacements} 个菜品`;
   if (plan.agentScore >= 88) return "营养、偏好和执行约束匹配较高";
   return "可继续通过固定或删除菜品细化";
 }
 
 function buildPlanGenerationDiscussion(options = {}) {
-  const pinnedCount = state.planConstraints.pinnedMeals.length;
+  const pinnedCount = state.planConstraints.pinnedDishes.length;
   const deletedCount = state.planConstraints.deletedDishes.length;
   const extraText = hasAdditionalProfile(state.formData.extraProfile)
     ? buildExtraProfileSummary(state.formData.extraProfile)
@@ -2374,7 +2386,7 @@ function renderPlanConstraintList() {
 
   container.innerHTML = "";
   const constraints = [
-    ...state.planConstraints.pinnedMeals.map(item => ({ ...item, type: "fixed", label: "固定" })),
+    ...state.planConstraints.pinnedDishes.map(item => ({ ...item, type: "fixed", label: "固定" })),
     ...state.planConstraints.deletedDishes.map(item => ({ ...item, type: "deleted", label: "删除" }))
   ];
 
@@ -2390,7 +2402,8 @@ function renderPlanConstraintList() {
     const chip = document.createElement("span");
     chip.className = `constraint-chip ${item.type}`;
     const text = document.createElement("span");
-    text.innerText = `${item.label}：${item.mealName || "菜品"} · ${item.food}`;
+    const position = item.mealName ? `${item.mealName} / 菜品 ${Number(item.dishIndex ?? 0) + 1}` : "菜品";
+    text.innerText = `${item.label}：${position} · ${item.food}`;
     const btn = document.createElement("button");
     btn.type = "button";
     btn.innerText = "×";
@@ -2406,30 +2419,34 @@ function persistPlanConstraints() {
   saveDataRecord("diet.planConstraints.current", state.planConstraints);
 }
 
-function togglePinnedMeal(planIndex, mealIndex) {
+function togglePinnedDish(planIndex, mealIndex, dishIndex) {
   const plan = state.plans[planIndex];
   const meal = plan?.meals?.[mealIndex];
-  if (!plan || !meal || meal.deleted) return;
+  const dish = splitMealDishes(meal?.food)[dishIndex];
+  if (!plan || !meal || !dish || dishMatchesDeleted(dish)) return;
 
-  const existingIndex = state.planConstraints.pinnedMeals.findIndex(item => (
-    item.planIndex === planIndex && item.mealName === meal.name
+  const existingIndex = state.planConstraints.pinnedDishes.findIndex(item => (
+    item.planIndex === planIndex
+    && item.mealName === meal.name
+    && item.dishIndex === dishIndex
   ));
 
   if (existingIndex >= 0) {
-    const [removed] = state.planConstraints.pinnedMeals.splice(existingIndex, 1);
+    const [removed] = state.planConstraints.pinnedDishes.splice(existingIndex, 1);
     addSystemLog("diet", `已取消固定菜品：${removed.food}`);
   } else {
-    state.planConstraints.pinnedMeals.push({
+    state.planConstraints.pinnedDishes.push({
       id: createConstraintId("pin"),
       planIndex,
       planName: plan.name,
       mealName: meal.name,
-      food: meal.food,
+      dishIndex,
+      food: dish,
       cals: meal.cals,
       icon: meal.icon,
       pinnedAt: new Date().toISOString()
     });
-    addSystemLog("diet", `已固定【${meal.name}】：${meal.food}。重新生成时将保留该菜品。`);
+    addSystemLog("diet", `已固定【${meal.name}】中的菜品：${dish}。重新生成时将保留该菜品。`);
   }
 
   persistPlanConstraints();
@@ -2437,17 +2454,20 @@ function togglePinnedMeal(planIndex, mealIndex) {
   showPlanDetails(planIndex);
 }
 
-function markMealDeleted(planIndex, mealIndex) {
+function markDishDeleted(planIndex, mealIndex, dishIndex) {
   const plan = state.plans[planIndex];
   const meal = plan?.meals?.[mealIndex];
-  if (!plan || !meal) return;
+  const dish = splitMealDishes(meal?.food)[dishIndex];
+  if (!plan || !meal || !dish) return;
 
-  state.planConstraints.pinnedMeals = state.planConstraints.pinnedMeals.filter(item => !(
-    item.planIndex === planIndex && item.mealName === meal.name
+  state.planConstraints.pinnedDishes = state.planConstraints.pinnedDishes.filter(item => !(
+    item.planIndex === planIndex
+    && item.mealName === meal.name
+    && item.dishIndex === dishIndex
   ));
 
   const alreadyDeleted = state.planConstraints.deletedDishes.some(item => (
-    normalizeDishText(item.food) === normalizeDishText(meal.food)
+    normalizeDishText(item.food) === normalizeDishText(dish)
   ));
   if (!alreadyDeleted) {
     state.planConstraints.deletedDishes.push({
@@ -2455,15 +2475,13 @@ function markMealDeleted(planIndex, mealIndex) {
       planIndex,
       planName: plan.name,
       mealName: meal.name,
-      food: meal.food,
+      dishIndex,
+      food: dish,
       deletedAt: new Date().toISOString()
     });
   }
 
-  meal.deleted = true;
-  meal.food = `已删除：${meal.food}`;
-  meal.cals = "待重新生成";
-  addSystemLog("diet", `已删除【${plan.name} - ${meal.name}】，该菜品会在重新生成时排除。`);
+  addSystemLog("diet", `已删除【${plan.name} - ${meal.name}】中的菜品：${dish}。重新生成时将只替换该菜品。`);
   persistPlanConstraints();
   renderPlanAgentPanel();
   showPlanDetails(planIndex);
@@ -2471,7 +2489,7 @@ function markMealDeleted(planIndex, mealIndex) {
 
 function removePlanConstraint(type, id) {
   if (type === "fixed") {
-    state.planConstraints.pinnedMeals = state.planConstraints.pinnedMeals.filter(item => item.id !== id);
+    state.planConstraints.pinnedDishes = state.planConstraints.pinnedDishes.filter(item => item.id !== id);
   } else {
     state.planConstraints.deletedDishes = state.planConstraints.deletedDishes.filter(item => item.id !== id);
   }
@@ -2540,23 +2558,39 @@ function showPlanDetails(idx) {
   mealsContainer.innerHTML = "";
   
   plan.meals.forEach((meal, mealIndex) => {
-    const pinned = isMealPinned(idx, meal.name);
+    const dishes = splitMealDishes(meal.food);
+    const hasPinnedDish = dishes.some((_, dishIndex) => isDishPinned(idx, meal.name, dishIndex));
+    const hasDeletedDish = dishes.some(dish => dishMatchesDeleted(dish));
     const card = document.createElement("div");
-    card.className = `meal-card ${pinned ? "pinned" : ""} ${meal.deleted ? "deleted" : ""}`;
+    card.className = `meal-card ${hasPinnedDish ? "pinned" : ""} ${hasDeletedDish ? "deleted" : ""}`;
     card.innerHTML = `
       <div class="meal-icon">${meal.icon}</div>
       <div class="meal-details">
         <div class="meal-name">${meal.name}</div>
-        <div class="meal-food">${meal.food}</div>
+        <div class="dish-list">
+          ${dishes.map((dish, dishIndex) => {
+            const pinned = isDishPinned(idx, meal.name, dishIndex);
+            const deleted = dishMatchesDeleted(dish);
+            return `
+              <div class="dish-row ${pinned ? "pinned" : ""} ${deleted ? "deleted" : ""}">
+                <span class="dish-name">${deleted ? `待替换：${dish}` : dish}</span>
+                <span class="dish-actions">
+                  <button type="button" class="meal-tool ${pinned ? "active" : ""}" data-action="pin" data-dish-index="${dishIndex}" ${deleted ? "disabled" : ""}>${pinned ? "已固定" : "固定"}</button>
+                  <button type="button" class="meal-tool delete" data-action="delete" data-dish-index="${dishIndex}" ${pinned || deleted ? "disabled" : ""}>删除</button>
+                </span>
+              </div>
+            `;
+          }).join("")}
+        </div>
       </div>
       <div class="meal-cals">${meal.cals}</div>
-      <div class="meal-actions">
-        <button type="button" class="meal-tool ${pinned ? "active" : ""}" data-action="pin" ${meal.deleted ? "disabled" : ""}>${pinned ? "已固定" : "固定"}</button>
-        <button type="button" class="meal-tool delete" data-action="delete" ${pinned || meal.deleted ? "disabled" : ""}>删除</button>
-      </div>
     `;
-    card.querySelector("[data-action='pin']")?.addEventListener("click", () => togglePinnedMeal(idx, mealIndex));
-    card.querySelector("[data-action='delete']")?.addEventListener("click", () => markMealDeleted(idx, mealIndex));
+    card.querySelectorAll("[data-action='pin']").forEach(button => {
+      button.addEventListener("click", () => togglePinnedDish(idx, mealIndex, parseInt(button.dataset.dishIndex)));
+    });
+    card.querySelectorAll("[data-action='delete']").forEach(button => {
+      button.addEventListener("click", () => markDishDeleted(idx, mealIndex, parseInt(button.dataset.dishIndex)));
+    });
     mealsContainer.appendChild(card);
   });
 
