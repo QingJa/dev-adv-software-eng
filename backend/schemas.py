@@ -104,3 +104,22 @@ class UserProfileUpdate(BaseModel):
         if not display_name:
             raise ValueError("请输入昵称")
         return display_name
+
+
+class DietPlanSaveRequest(BaseModel):
+    planDate: str = Field(pattern=r"^\d{4}-\d{2}-\d{2}$")
+    period: Literal["day", "week", "month"] = "day"
+    profile: dict[str, Any] = Field(default_factory=dict)
+    plans: list[dict[str, Any]] = Field(default_factory=list)
+    planDiscussion: dict[str, Any] = Field(default_factory=dict)
+    planConstraints: dict[str, Any] = Field(default_factory=dict)
+    metrics: dict[str, Any] = Field(default_factory=dict)
+
+    @field_validator("planDate")
+    @classmethod
+    def validate_plan_date(cls, value: str) -> str:
+        try:
+            datetime.strptime(value, "%Y-%m-%d")
+        except ValueError:
+            raise ValueError("计划日期必须是 YYYY-MM-DD") from None
+        return value

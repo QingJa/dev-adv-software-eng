@@ -42,6 +42,9 @@ Provider request formats:
 - `POST /api/v1/auth/login`
 - `GET /api/v1/auth/me`
 - `PUT /api/v1/auth/me/profile`
+- `GET /api/v1/diet/plans/saved?startDate=YYYY-MM-DD&endDate=YYYY-MM-DD`
+- `GET /api/v1/diet/plans/saved/{plan_date}`
+- `POST /api/v1/diet/plans/saved`
 - `POST /api/v1/switch/dispatch`
 - `GET /api/v1/switch/stats`
 - `GET /api/v1/events`
@@ -50,3 +53,5 @@ Provider request formats:
 The frontend sends all business calls through `/api/v1/switch/dispatch` with the shared API envelope.
 
 User accounts are stored in the SQLite `users` table. Passwords are salted PBKDF2-SHA256 hashes. On login, the frontend loads the existing user profile from the database; the profile is updated only when the questionnaire is submitted again.
+
+Saved diet plans are stored in the SQLite `diet_plans` table by `user_id + plan_date`. The frontend can prepare a one-day, one-week, or 30-day plan range, reads existing dates first, generates only missing dates, and overwrites a date only when the user regenerates that day.

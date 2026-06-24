@@ -697,6 +697,71 @@ input:focus, select:focus, textarea:focus {
   text-transform: uppercase;
 }
 
+.plan-calendar-panel {
+  border: 1px solid rgba(245, 158, 11, 0.18);
+  border-radius: 14px;
+  background: rgba(245, 158, 11, 0.055);
+  padding: 0.9rem 1rem;
+  margin-bottom: 1rem;
+  display: grid;
+  grid-template-columns: auto minmax(180px, 260px) 1fr;
+  align-items: center;
+  gap: 0.85rem;
+}
+
+.plan-period-tabs {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+}
+
+.plan-period-tabs button {
+  min-height: 34px;
+  border-radius: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(17, 24, 39, 0.34);
+  color: var(--text-secondary);
+  padding: 0 0.8rem;
+  font-family: var(--font-family);
+  font-weight: 700;
+  cursor: pointer;
+  transition: var(--transition-smooth);
+}
+
+.plan-period-tabs button.active,
+.plan-period-tabs button:hover {
+  border-color: rgba(245, 158, 11, 0.62);
+  color: var(--text-primary);
+  background: rgba(245, 158, 11, 0.14);
+}
+
+.plan-date-picker {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  min-width: 0;
+}
+
+.plan-date-picker span {
+  flex: 0 0 auto;
+  font-size: 0.78rem;
+  color: var(--text-secondary);
+}
+
+.plan-date-picker select {
+  width: 100%;
+  min-width: 0;
+  padding-top: 0.55rem;
+  padding-bottom: 0.55rem;
+}
+
+.plan-persistence-status {
+  color: var(--text-secondary);
+  font-size: 0.78rem;
+  line-height: 1.45;
+  text-align: right;
+}
+
 .plan-agent-panel {
   border: 1px solid rgba(16, 185, 129, 0.18);
   border-radius: 14px;
@@ -1696,7 +1761,8 @@ input:focus, select:focus, textarea:focus {
 :root[data-theme="light"] .profile-extract-card,
 :root[data-theme="light"] .profile-extract-empty,
 :root[data-theme="light"] .plan-agent-card,
-:root[data-theme="light"] .constraint-chip {
+:root[data-theme="light"] .constraint-chip,
+:root[data-theme="light"] .plan-period-tabs button {
   background: rgba(255, 255, 255, 0.56);
   border-color: rgba(38, 74, 56, 0.1);
 }
@@ -1738,6 +1804,7 @@ input:focus, select:focus, textarea:focus {
 :root[data-theme="light"] .auth-tabs,
 :root[data-theme="light"] .auth-profile-status,
 :root[data-theme="light"] .plan-agent-panel,
+:root[data-theme="light"] .plan-calendar-panel,
 :root[data-theme="light"] .plan-agent-consensus {
   background: rgba(242, 248, 240, 0.82);
 }
@@ -1819,8 +1886,13 @@ input:focus, select:focus, textarea:focus {
   .questionnaire-grid,
   .plan-content-grid,
   .evaluation-layout,
+  .plan-calendar-panel,
   .profile-extract-grid {
     grid-template-columns: 1fr;
+  }
+
+  .plan-persistence-status {
+    text-align: left;
   }
 
   .profile-summary-grid,
@@ -1892,9 +1964,20 @@ input:focus, select:focus, textarea:focus {
   }
 
   .meal-tool,
-  .regenerate-plans-btn {
+  .regenerate-plans-btn,
+  .plan-period-tabs button {
     flex: 1;
     width: 100%;
+  }
+
+  .plan-period-tabs,
+  .plan-date-picker {
+    width: 100%;
+  }
+
+  .plan-date-picker {
+    align-items: stretch;
+    flex-direction: column;
   }
 
   .meal-cals,

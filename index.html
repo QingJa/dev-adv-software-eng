@@ -142,6 +142,29 @@
                   <option value="heavy">高强度活动（重体力劳动/专业运动员）</option>
                 </select>
               </div>
+
+              <div class="form-group">
+                <label>计划周期</label>
+                <div class="checkbox-pill-grid">
+                  <label>
+                    <input type="radio" name="planPeriod" value="day" checked>
+                    <span class="pill-button">一天</span>
+                  </label>
+                  <label>
+                    <input type="radio" name="planPeriod" value="week">
+                    <span class="pill-button">一周</span>
+                  </label>
+                  <label>
+                    <input type="radio" name="planPeriod" value="month">
+                    <span class="pill-button">一个月</span>
+                  </label>
+                </div>
+              </div>
+
+              <div class="form-group">
+                <label for="planStartDate">计划起始日期</label>
+                <input type="date" id="planStartDate">
+              </div>
               
               <!-- 饮食习惯与偏好 -->
               <div class="form-group">
@@ -255,13 +278,26 @@
             <!-- 用户画像摘要 -->
           </div>
 
+          <section class="plan-calendar-panel" aria-label="饮食计划日期">
+            <div class="plan-period-tabs" role="group" aria-label="计划周期">
+              <button type="button" data-plan-period="day">一天</button>
+              <button type="button" data-plan-period="week">一周</button>
+              <button type="button" data-plan-period="month">一个月</button>
+            </div>
+            <label class="plan-date-picker" for="planDateSelect">
+              <span>查看日期</span>
+              <select id="planDateSelect"></select>
+            </label>
+            <div class="plan-persistence-status" id="planPersistenceStatus">尚未生成日期计划</div>
+          </section>
+
           <section class="plan-agent-panel" aria-label="多 Agent 方案讨论">
             <div class="plan-agent-header">
               <div>
                 <h3>多 Agent 方案讨论</h3>
                 <span>营养约束、口味偏好、执行成本共同讨论后生成</span>
               </div>
-              <button type="button" class="regenerate-plans-btn" id="regeneratePlansBtn">重新生成方案</button>
+              <button type="button" class="regenerate-plans-btn" id="regeneratePlansBtn">重新生成当天</button>
             </div>
             <div class="plan-constraint-list" id="planConstraintList">
               <span class="constraint-empty">暂无固定或删除菜品</span>

@@ -9,6 +9,7 @@ import json
 import os
 import secrets
 import time
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
@@ -25,6 +26,7 @@ from .schemas import (
     ApiResponse,
     AuthLoginRequest,
     AuthRegisterRequest,
+    DietPlanSaveRequest,
     HealthResponse,
     UserProfileUpdate,
 )
@@ -165,6 +167,14 @@ def _public_user(user: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _validate_plan_date(value: str, label: str = "计划日期") -> str:
+    try:
+        datetime.strptime(value, "%Y-%m-%d")
+    except ValueError:
+        raise HTTPException(status_code=422, detail=f"{label}必须是 YYYY-MM-DD") from None
+    return value
+
+
 def _attach_auth_user(envelope: ApiEnvelope, authorization: str | None) -> None:
     if not authorization:
         return
@@ -290,6 +300,52 @@ async def update_current_user_profile(
         raise HTTPException(status_code=404, detail="用户不存在")
     storage.save_record(f"user.{user['id']}.profile.current", create_profile(payload.profile))
     return {"user": _public_user(updated_user)}
+
+
+@app.get("/api/v1/diet/plans/saved")
+async def list_saved_diet_plans(
+    startDate: str,
+    endDate: str | None = None,
+    authorization: str | None = Header(default=None),
+) -> dict[str, Any]:
+    user = _current_user(authorization)
+    start_date = _validate_plan_date(startDate, "开始日期")
+    end_date = _validate_plan_date(endDate or startDate, "结束日期")
+    if end_date < start_date:
+        raise HTTPException(status_code=422, detail="结束日期不能早于开始日期")
+    return {"plans": storage.list_diet_plans(user["id"], start_date, end_date)}
+
+
+@app.get("/api/v1/diet/plans/saved/{plan_date}")
+async def get_saved_diet_plan(
+    plan_date: str,
+    authorization: str | None = Header(default=None),
+) -> dict[str, Any]:
+    user = _current_user(authorization)
+    checked_date = _validate_plan_date(plan_date)
+    return {"plan": storage.get_diet_plan(user["id"], checked_date)}
+
+
+@app.post("/api/v1/diet/plans/saved")
+async def save_diet_plan(
+    payload: DietPlanSaveRequest,
+    authorization: str | None = Header(default=None),
+) -> dict[str, Any]:
+    user = _current_user(authorization)
+    if not payload.plans:
+        raise HTTPException(status_code=422, detail="饮食方案不能为空")
+
+    plan = storage.save_diet_plan(
+        user_id=user["id"],
+        plan_date=payload.planDate,
+        period=payload.period,
+        profile=payload.profile,
+        plans=payload.plans,
+        plan_discussion=payload.planDiscussion,
+        plan_constraints=payload.planConstraints,
+        metrics=payload.metrics,
+    )
+    return {"plan": plan}
 
 
 @app.post("/api/v1/switch/dispatch", response_model=ApiResponse)

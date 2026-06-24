@@ -60,13 +60,27 @@ class Storage:
                 )
                 """
             )
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS diet_plans (
+                    user_id TEXT NOT NULL,
+                    plan_date TEXT NOT NULL,
+                    period TEXT NOT NULL,
+                    profile TEXT NOT NULL,
+                    plans TEXT NOT NULL,
+                    plan_discussion TEXT NOT NULL DEFAULT '{}',
+                    plan_constraints TEXT NOT NULL DEFAULT '{}',
+                    metrics TEXT NOT NULL DEFAULT '{}',
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    PRIMARY KEY(user_id, plan_date),
+                    FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
+                )
+                """
+            )
 
     def _decode_user(self, row: sqlite3.Row) -> dict[str, Any]:
-        raw_profile = row["profile"] or "{}"
-        try:
-            profile = json.loads(raw_profile)
-        except json.JSONDecodeError:
-            profile = {}
+        profile = self._decode_json(row["profile"], {})
 
         return {
             "id": row["id"],
@@ -77,6 +91,30 @@ class Storage:
             "createdAt": row["created_at"],
             "updatedAt": row["updated_at"],
             "lastLoginAt": row["last_login_at"],
+        }
+
+    def _decode_json(self, raw_value: str | None, fallback: Any) -> Any:
+        try:
+            return json.loads(raw_value or "")
+        except json.JSONDecodeError:
+            if isinstance(fallback, dict):
+                return dict(fallback)
+            if isinstance(fallback, list):
+                return list(fallback)
+            return fallback
+
+    def _decode_diet_plan(self, row: sqlite3.Row) -> dict[str, Any]:
+        return {
+            "userId": row["user_id"],
+            "planDate": row["plan_date"],
+            "period": row["period"],
+            "profile": self._decode_json(row["profile"], {}),
+            "plans": self._decode_json(row["plans"], []),
+            "planDiscussion": self._decode_json(row["plan_discussion"], {}),
+            "planConstraints": self._decode_json(row["plan_constraints"], {}),
+            "metrics": self._decode_json(row["metrics"], {}),
+            "createdAt": row["created_at"],
+            "updatedAt": row["updated_at"],
         }
 
     def save_record(self, key: str, value: dict[str, Any]) -> None:
@@ -183,6 +221,87 @@ class Storage:
                     (encoded_profile, now, user_id),
                 )
         return self.get_user_by_id(user_id)
+
+    def save_diet_plan(
+        self,
+        user_id: str,
+        plan_date: str,
+        period: str,
+        profile: dict[str, Any],
+        plans: list[dict[str, Any]],
+        plan_discussion: dict[str, Any] | None = None,
+        plan_constraints: dict[str, Any] | None = None,
+        metrics: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        now = utc_now()
+        encoded_profile = json.dumps(profile, ensure_ascii=False)
+        encoded_plans = json.dumps(plans, ensure_ascii=False)
+        encoded_discussion = json.dumps(plan_discussion or {}, ensure_ascii=False)
+        encoded_constraints = json.dumps(plan_constraints or {}, ensure_ascii=False)
+        encoded_metrics = json.dumps(metrics or {}, ensure_ascii=False)
+
+        with self._lock, self._connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO diet_plans(
+                    user_id, plan_date, period, profile, plans, plan_discussion,
+                    plan_constraints, metrics, created_at, updated_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(user_id, plan_date) DO UPDATE SET
+                    period = excluded.period,
+                    profile = excluded.profile,
+                    plans = excluded.plans,
+                    plan_discussion = excluded.plan_discussion,
+                    plan_constraints = excluded.plan_constraints,
+                    metrics = excluded.metrics,
+                    updated_at = excluded.updated_at
+                """,
+                (
+                    user_id,
+                    plan_date,
+                    period,
+                    encoded_profile,
+                    encoded_plans,
+                    encoded_discussion,
+                    encoded_constraints,
+                    encoded_metrics,
+                    now,
+                    now,
+                ),
+            )
+
+        saved = self.get_diet_plan(user_id, plan_date)
+        if saved is None:
+            raise RuntimeError("saved diet plan could not be loaded")
+        return saved
+
+    def get_diet_plan(self, user_id: str, plan_date: str) -> dict[str, Any] | None:
+        with self._connect() as conn:
+            row = conn.execute(
+                """
+                SELECT user_id, plan_date, period, profile, plans, plan_discussion,
+                       plan_constraints, metrics, created_at, updated_at
+                FROM diet_plans
+                WHERE user_id = ? AND plan_date = ?
+                """,
+                (user_id, plan_date),
+            ).fetchone()
+        return self._decode_diet_plan(row) if row else None
+
+    def list_diet_plans(self, user_id: str, start_date: str, end_date: str) -> list[dict[str, Any]]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT user_id, plan_date, period, profile, plans, plan_discussion,
+                       plan_constraints, metrics, created_at, updated_at
+                FROM diet_plans
+                WHERE user_id = ? AND plan_date >= ? AND plan_date <= ?
+                ORDER BY plan_date ASC
+                """,
+                (user_id, start_date, end_date),
+            ).fetchall()
+        return [self._decode_diet_plan(row) for row in rows]
 
     def record_count(self) -> int:
         with self._connect() as conn:
