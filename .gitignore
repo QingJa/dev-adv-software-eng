@@ -3,6 +3,7 @@ __pycache__/
 *.py[cod]
 backend/*.db
 backend/*.db-*
+*.inspect.ndjson
 .DS_Store
 .env
 .env.*

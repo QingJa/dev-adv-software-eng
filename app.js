@@ -85,6 +85,31 @@ const STORAGE_KEYS = {
   authToken: "dietPlannerAuthTokenV1"
 };
 
+const DIET_PLAN_VARIETY_VERSION = "date-context-v5-angle-score-tradeoff";
+const PLAN_DISPLAY_LABELS = ["方案 A", "方案 B", "方案 C"];
+const PLAN_ANGLE_META = [
+  {
+    label: "营养稳态角度",
+    role: "营养约束 Agent",
+    defaultName: "营养稳态高蛋白餐"
+  },
+  {
+    label: "饱腹体验角度",
+    role: "偏好体验 Agent",
+    defaultName: "高纤慢糖饱腹餐"
+  },
+  {
+    label: "时令地域角度",
+    role: "时令地域 Agent",
+    defaultName: "时令地域轻负担餐"
+  }
+];
+const PLAN_ANGLE_SCORE_PROFILES = [
+  { cost: 80, season: 84, region: 94 },
+  { cost: 94, season: 82, region: 78 },
+  { cost: 76, season: 96, region: 88 }
+];
+
 const memoryCache = new Map();
 let persistentRecords = {};
 let backendEventSource = null;
@@ -131,7 +156,7 @@ const serviceRegistry = {
     { id: "diet", name: "diet-planner", api: "/api/v1/diet/plans" },
     { id: "ingredient", name: "ingredient-planner", api: "/api/v1/ingredients/list" },
     { id: "eval", name: "evaluation-engine", api: "/api/v1/evaluation/score" },
-    { id: "market", name: "marketing-writer", api: "/api/v1/marketing/content" }
+    { id: "market", name: "sharing-writer", api: "/api/v1/marketing/content" }
   ],
   apiRoutes: [
     { route: "/api/v1/system/boot", method: "POST", owner: "switch", latency: 48 },
@@ -253,9 +278,14 @@ function setTheme(theme) {
   localStorage.setItem("dietPlannerTheme", state.theme);
 }
 
-function copyTextToClipboard(text) {
+async function copyTextToClipboard(text) {
   if (navigator.clipboard && window.isSecureContext) {
-    return navigator.clipboard.writeText(text);
+    try {
+      await navigator.clipboard.writeText(text);
+      return "clipboard";
+    } catch (err) {
+      console.warn("Clipboard API 复制失败，尝试降级复制。", err);
+    }
   }
 
   return new Promise((resolve, reject) => {
@@ -270,12 +300,45 @@ function copyTextToClipboard(text) {
     try {
       const copied = document.execCommand("copy");
       document.body.removeChild(textArea);
-      copied ? resolve() : reject(new Error("execCommand copy failed"));
+      copied ? resolve("execCommand") : reject(new Error("execCommand copy failed"));
     } catch (err) {
       document.body.removeChild(textArea);
       reject(err);
     }
   });
+}
+
+function selectTextElement(element) {
+  if (!element || !window.getSelection || !document.createRange) {
+    return false;
+  }
+
+  const range = document.createRange();
+  range.selectNodeContents(element);
+  const selection = window.getSelection();
+  selection.removeAllRanges();
+  selection.addRange(range);
+  element.classList.add("copy-selected");
+
+  setTimeout(() => {
+    element.classList.remove("copy-selected");
+  }, 2400);
+
+  return true;
+}
+
+function flashCopyButton(btn, html, className) {
+  const originalHtml = btn.dataset.originalHtml || btn.innerHTML;
+  btn.dataset.originalHtml = originalHtml;
+  btn.innerHTML = html;
+  btn.classList.remove("copied", "manual-copy");
+  btn.classList.add(className);
+
+  setTimeout(() => {
+    btn.innerHTML = originalHtml;
+    btn.classList.remove("copied", "manual-copy");
+    delete btn.dataset.originalHtml;
+  }, className === "copied" ? 2000 : 2800);
 }
 
 function initArchitectureRuntime() {
@@ -726,6 +789,75 @@ function getDietPlanRecordKey(planDate) {
   return `diet.plan.${owner}.${planDate}`;
 }
 
+function stableStringify(value) {
+  if (Array.isArray(value)) {
+    return `[${value.map(item => stableStringify(item)).join(",")}]`;
+  }
+  if (value && typeof value === "object") {
+    return `{${Object.keys(value).sort().map(key => `${JSON.stringify(key)}:${stableStringify(value[key])}`).join(",")}}`;
+  }
+  return JSON.stringify(value ?? null);
+}
+
+function normalizeComparableList(value) {
+  return Array.isArray(value)
+    ? value.map(item => String(item || "").trim()).filter(Boolean).sort()
+    : [];
+}
+
+function getComparableProfile(profile = {}) {
+  const source = profile && typeof profile === "object" ? profile : {};
+  const extra = source.extraProfile && typeof source.extraProfile === "object" ? source.extraProfile : {};
+  return {
+    gender: source.gender || "",
+    age: Number(source.age) || 0,
+    height: Number(source.height) || 0,
+    weight: Number(source.weight) || 0,
+    goal: source.goal || "",
+    activity: source.activity || "",
+    dietHabit: source.dietHabit || "",
+    region: source.region || "",
+    allergies: normalizeComparableList(source.allergies),
+    extraProfileText: String(source.extraProfileText || extra.rawText || "").trim(),
+    extraProfile: {
+      likes: normalizeComparableList(extra.likes),
+      avoids: normalizeComparableList(extra.avoids),
+      preferences: normalizeComparableList(extra.preferences),
+      habits: normalizeComparableList(extra.habits),
+      notes: normalizeComparableList(extra.notes)
+    }
+  };
+}
+
+function getProfileSignature(profile = state.formData) {
+  return stableStringify(getComparableProfile(profile));
+}
+
+function isDietPlanSnapshotProfileMatch(snapshot, profile = state.formData) {
+  if (!snapshot || !profile?.age) return true;
+  const currentSignature = getProfileSignature(profile);
+  const savedSignature = snapshot.metrics?.profileSignature || getProfileSignature(snapshot.profile || {});
+  return savedSignature === currentSignature;
+}
+
+function getUsableDietPlanSnapshot(snapshot, planDate, sourceLabel = "已保存") {
+  const normalized = normalizeDietPlanSnapshot(snapshot, snapshot?.source || "local");
+  if (!normalized?.plans?.length) return null;
+  if (isDietPlanSnapshotProfileMatch(normalized)) {
+    if (normalized.metrics?.varietyVersion === DIET_PLAN_VARIETY_VERSION) {
+      return normalized;
+    }
+    if (sourceLabel) {
+      addSystemLog("data", `${sourceLabel} ${formatPlanDateLabel(planDate || normalized.planDate)} 的饮食计划来自旧版生成策略，已跳过并重新生成。`);
+    }
+    return null;
+  }
+  if (sourceLabel) {
+    addSystemLog("data", `${sourceLabel} ${formatPlanDateLabel(planDate || normalized.planDate)} 的饮食计划与当前画像不一致，已跳过并重新生成。`);
+  }
+  return null;
+}
+
 function normalizeDietPlanSnapshot(rawSnapshot, source = "local") {
   if (!rawSnapshot || typeof rawSnapshot !== "object") return null;
   const planDate = normalizeIsoDate(rawSnapshot.planDate || state.dietCalendar.selectedDate || state.dietCalendar.startDate);
@@ -756,6 +888,8 @@ function createDietPlanSnapshot(planDate, source = "generated") {
       bmr: state.bmr,
       tdee: state.tdee,
       targetCalories: state.targetCalories,
+      profileSignature: getProfileSignature(state.formData),
+      varietyVersion: DIET_PLAN_VARIETY_VERSION,
       edgeCompute: state.edgeCompute
     },
     createdAt: new Date().toISOString(),
@@ -856,11 +990,406 @@ function applyDietPlanSnapshot(snapshot, options = {}) {
 function generateDietPlanSnapshotForDate(planDate, options = {}) {
   state.dietCalendar.selectedDate = normalizeIsoDate(planDate);
   state.planConstraints = normalizePlanConstraints(options.planConstraints || state.planConstraints);
+  const dateContext = options.dateContext || buildPlanDateContext(state.dietCalendar.selectedDate, options);
   calculateAndGenerateDietData({
     reason: options.reason || "initial",
-    planDate: state.dietCalendar.selectedDate
+    planDate: state.dietCalendar.selectedDate,
+    dateContext
   });
   return createDietPlanSnapshot(state.dietCalendar.selectedDate, "generated");
+}
+
+function summarizeDietPlanForVariety(snapshot) {
+  if (!snapshot?.plans?.length) return null;
+  return {
+    planDate: snapshot.planDate,
+    plans: snapshot.plans.slice(0, 3).map(plan => ({
+      name: plan.name,
+      meals: (plan.meals || []).map(meal => meal.food).filter(Boolean)
+    }))
+  };
+}
+
+function buildPlanDateContext(planDate, options = {}) {
+  const normalizedDate = normalizeIsoDate(planDate);
+  const rangeDates = Array.isArray(options.rangeDates) && options.rangeDates.length
+    ? options.rangeDates
+    : getPlanDateRange();
+  const dayIndex = Math.max(0, rangeDates.indexOf(normalizedDate));
+  const focusList = [
+    "高蛋白低油",
+    "高纤慢糖",
+    "清爽补水",
+    "豆制品与菌菇",
+    "杂粮主食轮换",
+    "轻食沙拉与温热汤",
+    "家常低负担"
+  ];
+  const previousPlanSummaries = rangeDates
+    .slice(Math.max(0, dayIndex - 3), dayIndex)
+    .map(date => state.dietCalendar.savedDates[date])
+    .map(summarizeDietPlanForVariety)
+    .filter(Boolean);
+
+  return {
+    planDate: normalizedDate,
+    weekday: getPlanWeekday(normalizedDate),
+    dayIndex: dayIndex + 1,
+    totalDays: rangeDates.length || 1,
+    varietyFocus: focusList[(dayIndex + Number(state.planConstraints?.revision || 0)) % focusList.length],
+    previousPlanSummaries
+  };
+}
+
+async function generateDietPlanSnapshotForDateAsync(planDate, options = {}) {
+  const normalizedDate = normalizeIsoDate(planDate);
+  state.dietCalendar.selectedDate = normalizedDate;
+  state.planConstraints = normalizePlanConstraints(options.planConstraints || state.planConstraints);
+  const dateContext = buildPlanDateContext(normalizedDate, options);
+
+  if (!state.backend.enabled) {
+    return generateDietPlanSnapshotForDate(normalizedDate, { ...options, dateContext });
+  }
+
+  try {
+    const response = await apiSwitch.request("/api/v1/diet/plans", {
+      profile: state.formData,
+      edgeCompute: state.edgeCompute,
+      agentContext: state.formData.extraProfile,
+      planConstraints: state.planConstraints,
+      planDate: normalizedDate,
+      planPeriod: state.dietCalendar.period,
+      dateContext,
+      regenerate: options.reason === "regenerate"
+    }, {
+      source: "customer-manager",
+      target: "diet-planner",
+      latency: 110
+    });
+
+    if (!response.ok || !Array.isArray(response.data?.plans) || response.data.plans.length < 3) {
+      throw new Error(response.error || "后端未返回完整的多方案结果");
+    }
+
+    const snapshot = createDietPlanSnapshotFromAgentResponse(response.data, normalizedDate, { ...options, dateContext });
+    const modeText = response.data.mode === "real"
+      ? `大模型 ${response.data.providerName || response.data.providerId || ""}`.trim()
+      : response.data.mode === "fallback"
+        ? "大模型失败后的 fallback"
+        : "mock 多 Agent";
+    addSystemLog("diet", `${formatPlanDateLabel(normalizedDate)} 已由${modeText}生成 3 套候选方案。`);
+    if (response.data.mode === "fallback" && response.data.note) {
+      addSystemLog("diet", `方案生成 fallback 原因：${response.data.note}`);
+    }
+    return snapshot;
+  } catch (err) {
+    addSystemLog("diet", `大模型多 Agent 方案生成不可用，已切换前端本地 fallback：${err.message || "未知错误"}`);
+    return generateDietPlanSnapshotForDate(normalizedDate, { ...options, dateContext });
+  }
+}
+
+function createDietPlanSnapshotFromAgentResponse(data, planDate, options = {}) {
+  const normalizedDate = normalizeIsoDate(planDate);
+  const localMetrics = computeMetabolicTargets(state.formData);
+
+  state.bmr = Number(data.bmr) || localMetrics.bmr;
+  state.tdee = Number(data.tdee) || localMetrics.tdee;
+  state.targetCalories = Number(data.targetCalories) || localMetrics.targetCalories;
+  state.edgeCompute = {
+    ...state.edgeCompute,
+    location: data.mode === "real" ? "大模型多 Agent 生成" : data.mode === "fallback" ? "大模型 fallback" : "Mock 多 Agent",
+    bmr: `${state.bmr} kcal`,
+    tdee: `${state.tdee} kcal`,
+    runtimeMs: data.latencyMs || state.edgeCompute.runtimeMs || 0,
+    cacheState: data.mode || "mock"
+  };
+  renderEdgeComputeStatus();
+
+  state.plans = ensurePlanNamesUseAngles(
+    data.plans.slice(0, 3).map((plan, planIndex) => normalizeAgentGeneratedPlan(plan, planIndex))
+  );
+  state.plans = calibratePlanScoresByAngle(state.plans);
+  if (data.mode === "real") {
+    ensureCrossDateMenuDiversity(normalizedDate, { ...options, dateContext: options.dateContext || buildPlanDateContext(normalizedDate, options) });
+  } else {
+    applyPlanDateVariation(normalizedDate, { resetIngredients: true });
+  }
+  applyPlanConstraintsToGeneratedPlans();
+  state.plans = state.plans.map((plan, planIndex) => ({
+    ...plan,
+    agentScore: Number(plan.agentScore) || calculatePlanAgentScore(plan, planIndex),
+    agentNotes: plan.agentNotes || buildPlanAgentNotes(plan),
+    ingredients: hasUsableIngredients(plan.ingredients) ? plan.ingredients : buildIngredientsFromMeals(plan, state.formData)
+  }));
+
+  const discussion = normalizePlanDiscussion(data.planDiscussion);
+  state.planDiscussion = discussion.agents.length
+    ? discussion
+    : buildPlanGenerationDiscussion({ ...options, reason: options.reason || "llm" });
+  saveDataRecord("diet.planDiscussion.current", state.planDiscussion);
+
+  return createDietPlanSnapshot(normalizedDate, data.mode === "real" ? "llm" : data.mode || "generated");
+}
+
+function computeMetabolicTargets(profile) {
+  const f = profile || {};
+  const genderOffset = f.gender === "male" ? 5 : -161;
+  const bmr = Math.round(10 * Number(f.weight || 56) + 6.25 * Number(f.height || 165) - 5 * Number(f.age || 28) + genderOffset);
+  const activityMultiplier = f.activity === "heavy" ? 1.725 : f.activity === "moderate" ? 1.55 : f.activity === "light" ? 1.375 : 1.2;
+  const tdee = Math.round(bmr * activityMultiplier);
+  const targetCalories = f.goal === "gain-muscle"
+    ? tdee + 400
+    : f.goal === "low-gi"
+      ? Math.max(1300, tdee - 200)
+      : f.goal === "lose-fat"
+        ? Math.max(1200, tdee - 450)
+        : tdee;
+  return { bmr, tdee, targetCalories };
+}
+
+function normalizeAgentGeneratedPlan(plan, planIndex) {
+  const fallbackMeals = [
+    { name: "早餐", icon: "🌅", food: "均衡早餐", cals: "350 kcal" },
+    { name: "午餐", icon: "☀️", food: "高蛋白午餐", cals: "550 kcal" },
+    { name: "晚餐", icon: "🌙", food: "清淡晚餐", cals: "420 kcal" },
+    { name: "加餐", icon: "🍎", food: "低糖加餐", cals: "150 kcal" }
+  ];
+  const meals = Array.isArray(plan.meals) ? plan.meals : [];
+  const normalizedMeals = fallbackMeals.map((fallback, mealIndex) => {
+    const meal = meals[mealIndex] && typeof meals[mealIndex] === "object" ? meals[mealIndex] : {};
+    return {
+      name: meal.name || fallback.name,
+      icon: meal.icon || fallback.icon,
+      food: meal.food || fallback.food,
+      cals: meal.cals || fallback.cals,
+      id: meal.id || createMealId(planIndex, meal.name || fallback.name, mealIndex),
+      deleted: false,
+      replacedByAgent: false
+    };
+  });
+
+  return {
+    name: cleanPlanName(plan.name) || getDefaultPlanNameForAngle(planIndex),
+    sub: plan.sub || "多 Agent 生成",
+    calories: Number(plan.calories) || state.targetCalories || 1500,
+    macros: normalizePlanMacros(plan.macros),
+    meals: normalizedMeals,
+    ingredients: normalizePlanIngredients(plan.ingredients),
+    scores: normalizePlanScores(plan.scores),
+    agentScore: normalizeScoreValue(plan.agentScore, 82),
+    agentNotes: plan.agentNotes || ""
+  };
+}
+
+function parseNumberLike(value) {
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (typeof value === "string") {
+    const match = value.replace(/,/g, "").match(/-?\d+(\.\d+)?/);
+    if (match) return Number(match[0]);
+  }
+  return NaN;
+}
+
+function normalizeScoreValue(value, fallback = 80) {
+  const fallbackScore = Number.isFinite(Number(fallback)) ? Number(fallback) : 80;
+  const numeric = parseNumberLike(value);
+  if (!Number.isFinite(numeric) || numeric <= 0) return clampScore(fallbackScore);
+  if (numeric <= 1) return clampScore(numeric * 100);
+  if (numeric <= 10) return clampScore(numeric * 10);
+  return clampScore(numeric);
+}
+
+function normalizeMacroParts(carbs, protein, fat, fallback = { carbs: 40, protein: 32, fat: 28 }) {
+  const values = [carbs, protein, fat].map(Number);
+  if (values.some(value => !Number.isFinite(value) || value <= 0)) {
+    return { ...fallback };
+  }
+
+  const total = values.reduce((sum, value) => sum + value, 0);
+  let macroCalories = total;
+  if (total > 110) {
+    macroCalories = (values[0] * 4) + (values[1] * 4) + (values[2] * 9);
+    if (!Number.isFinite(macroCalories) || macroCalories <= 0) return { ...fallback };
+    values[0] = (values[0] * 4 / macroCalories) * 100;
+    values[1] = (values[1] * 4 / macroCalories) * 100;
+    values[2] = (values[2] * 9 / macroCalories) * 100;
+  } else if (Math.abs(total - 100) > 3) {
+    values[0] = (values[0] / total) * 100;
+    values[1] = (values[1] / total) * 100;
+    values[2] = (values[2] / total) * 100;
+  }
+
+  const roundedCarbs = clampScore(values[0]);
+  const roundedProtein = clampScore(values[1]);
+  const roundedFat = Math.max(0, Math.min(100, 100 - roundedCarbs - roundedProtein));
+  return {
+    carbs: roundedCarbs,
+    protein: roundedProtein,
+    fat: roundedFat
+  };
+}
+
+function normalizePlanMacros(macros) {
+  const source = macros && typeof macros === "object" ? macros : {};
+  return normalizeMacroParts(
+    parseNumberLike(source.carbs),
+    parseNumberLike(source.protein),
+    parseNumberLike(source.fat)
+  );
+}
+
+function normalizePlanScores(scores) {
+  const source = scores && typeof scores === "object" ? scores : {};
+  return {
+    cost: normalizeScoreValue(source.cost, 80),
+    season: normalizeScoreValue(source.season, 80),
+    region: normalizeScoreValue(source.region, 80)
+  };
+}
+
+function shiftScoreByModel(anchor, modelValue) {
+  const delta = Math.max(-3, Math.min(3, Math.round((normalizeScoreValue(modelValue, anchor) - 80) / 6)));
+  return clampScore(anchor + delta);
+}
+
+function getPlanAngleScoreProfile(index) {
+  return PLAN_ANGLE_SCORE_PROFILES[index] || { cost: 84, season: 84, region: 84 };
+}
+
+function calibratePlanScoresByAngle(plans) {
+  const calibrated = plans.map((plan, index) => {
+    if (plan.scoreProfileVersion === DIET_PLAN_VARIETY_VERSION) {
+      return {
+        ...plan,
+        scores: normalizePlanScores(plan.scores)
+      };
+    }
+    const anchor = getPlanAngleScoreProfile(index);
+    const modelScores = normalizePlanScores(plan.scores);
+    return {
+      ...plan,
+      scoreProfileVersion: DIET_PLAN_VARIETY_VERSION,
+      scores: {
+        cost: shiftScoreByModel(anchor.cost, modelScores.cost),
+        season: shiftScoreByModel(anchor.season, modelScores.season),
+        region: shiftScoreByModel(anchor.region, modelScores.region)
+      }
+    };
+  });
+
+  if (calibrated.length >= 3) {
+    calibrated[1].scores.cost = Math.max(calibrated[1].scores.cost, calibrated[0].scores.cost + 4, calibrated[2].scores.cost + 4);
+    calibrated[2].scores.season = Math.max(calibrated[2].scores.season, calibrated[0].scores.season + 4, calibrated[1].scores.season + 4);
+    calibrated[0].scores.region = Math.max(calibrated[0].scores.region, calibrated[1].scores.region + 4, calibrated[2].scores.region + 4);
+    calibrated.forEach(plan => {
+      plan.scores = normalizePlanScores(plan.scores);
+    });
+  }
+
+  return calibrated;
+}
+
+function getPlanDisplayLabel(index) {
+  return PLAN_DISPLAY_LABELS[index] || `方案 ${index + 1}`;
+}
+
+function getPlanAngleMeta(index) {
+  return PLAN_ANGLE_META[index] || {
+    label: "综合平衡角度",
+    role: "综合协调 Agent",
+    defaultName: `综合平衡餐 ${index + 1}`
+  };
+}
+
+function cleanPlanName(value) {
+  return String(value || "")
+    .replace(/^方案\s*[ABCＡＢＣ]\s*[:：\-｜|]?\s*/i, "")
+    .replace(/\s*方案\s*[ABCＡＢＣ]\s*$/i, "")
+    .replace(/\s*[ABCＡＢＣ]\s*方案\s*$/i, "")
+    .replace(/(?<=[\u4e00-\u9fa5])\s*[ABCＡＢＣ]\s*$/i, "")
+    .trim();
+}
+
+function inferPlanNameBase(value) {
+  return cleanPlanName(value)
+    .replace(/餐$/g, "")
+    .replace(/食谱$/g, "")
+    .replace(/膳食$/g, "")
+    .replace(/轻食$/g, "")
+    .trim();
+}
+
+function getDefaultPlanNameForAngle(index, profile = state.formData) {
+  const goal = profile?.goal || "lose-fat";
+  const habit = profile?.dietHabit || "balanced";
+  if (habit === "vegan") {
+    return ["植物蛋白轻盈餐", "高纤谷豆饱腹餐", "纯素优脂时令餐"][index] || getPlanAngleMeta(index).defaultName;
+  }
+  if (goal === "gain-muscle") {
+    return ["高蛋白训练修复餐", "复合碳水恢复餐", "优脂增肌能量餐"][index] || getPlanAngleMeta(index).defaultName;
+  }
+  if (goal === "low-gi" || habit === "low-carb") {
+    return ["低 GI 稳糖低碳餐", "高纤慢糖平衡餐", "优脂轻食稳糖餐"][index] || getPlanAngleMeta(index).defaultName;
+  }
+  if (habit === "mediterranean") {
+    return ["控脂高蛋白地中海餐", "全谷高纤地中海餐", "经典优脂地中海餐"][index] || getPlanAngleMeta(index).defaultName;
+  }
+  return ["高蛋白稳态减脂餐", "高纤慢糖饱腹餐", "优脂时令轻食餐"][index] || getPlanAngleMeta(index).defaultName;
+}
+
+function ensurePlanNamesUseAngles(plans, profile = state.formData) {
+  const cleaned = plans.map((plan, index) => ({
+    ...plan,
+    name: cleanPlanName(plan.name) || getDefaultPlanNameForAngle(index, profile)
+  }));
+  const baseCounts = cleaned.reduce((acc, plan) => {
+    const base = inferPlanNameBase(plan.name);
+    acc[base] = (acc[base] || 0) + 1;
+    return acc;
+  }, {});
+  const exactCounts = cleaned.reduce((acc, plan) => {
+    const key = normalizeDishText(plan.name);
+    acc[key] = (acc[key] || 0) + 1;
+    return acc;
+  }, {});
+
+  return cleaned.map((plan, index) => {
+    const base = inferPlanNameBase(plan.name);
+    const exact = normalizeDishText(plan.name);
+    const shouldUseAngleName = !plan.name
+      || baseCounts[base] > 1
+      || exactCounts[exact] > 1
+      || /^方案\s*[ABCＡＢＣ]/i.test(String(plan.name || ""))
+      || /方案\s*[ABCＡＢＣ]$/i.test(String(plan.name || ""));
+    const meta = getPlanAngleMeta(index);
+    return {
+      ...plan,
+      name: shouldUseAngleName ? getDefaultPlanNameForAngle(index, profile) : plan.name,
+      angleLabel: meta.label,
+      angleRole: meta.role
+    };
+  });
+}
+
+function formatPlanLabelName(plan, index) {
+  return `${getPlanDisplayLabel(index)}｜${plan?.name || getDefaultPlanNameForAngle(index)}`;
+}
+
+function normalizePlanIngredients(ingredients) {
+  const source = ingredients && typeof ingredients === "object" ? ingredients : {};
+  return ["meat", "veggies", "grains", "seasonings"].reduce((acc, key) => {
+    const items = Array.isArray(source[key]) ? source[key] : [];
+    acc[key] = items
+      .filter(item => item && typeof item === "object")
+      .map(item => ({ name: String(item.name || "食材"), qty: String(item.qty || "适量") }));
+    return acc;
+  }, {});
+}
+
+function hasUsableIngredients(ingredients) {
+  return ingredients
+    && typeof ingredients === "object"
+    && Object.values(ingredients).some(items => Array.isArray(items) && items.length > 0);
 }
 
 async function prepareDietPlansForCurrentRange(options = {}) {
@@ -877,12 +1406,17 @@ async function prepareDietPlansForCurrentRange(options = {}) {
   if (backendAvailable) {
     try {
       const savedPlans = await fetchDietPlanRangeFromDb(dates[0], dates[dates.length - 1]);
-      savedPlans.forEach(snapshot => {
+      const matchingSavedPlans = savedPlans.filter(snapshot => isDietPlanSnapshotProfileMatch(snapshot));
+      const skippedCount = savedPlans.length - matchingSavedPlans.length;
+      matchingSavedPlans.forEach(snapshot => {
         state.dietCalendar.savedDates[snapshot.planDate] = snapshot;
         saveLocalDietPlanSnapshot(snapshot);
       });
-      if (savedPlans.length > 0) {
-        addSystemLog("data", `已从数据库读取 ${savedPlans.length} 天饮食计划。`);
+      if (matchingSavedPlans.length > 0) {
+        addSystemLog("data", `已从数据库读取 ${matchingSavedPlans.length} 天与当前画像匹配的饮食计划。`);
+      }
+      if (skippedCount > 0) {
+        addSystemLog("data", `数据库中 ${skippedCount} 天饮食计划与当前画像不一致，已跳过并重新生成。`);
       }
     } catch (err) {
       backendAvailable = false;
@@ -892,6 +1426,7 @@ async function prepareDietPlansForCurrentRange(options = {}) {
 
   for (const planDate of dates) {
     let snapshot = state.dietCalendar.savedDates[planDate] || readLocalDietPlanSnapshot(planDate);
+    snapshot = getUsableDietPlanSnapshot(snapshot, planDate, "");
     if (options.forceRegenerate && planDate === requestedSelectedDate) {
       snapshot = null;
     }
@@ -900,9 +1435,10 @@ async function prepareDietPlansForCurrentRange(options = {}) {
       const constraints = planDate === requestedSelectedDate
         ? selectedConstraints
         : createEmptyPlanConstraints();
-      snapshot = generateDietPlanSnapshotForDate(planDate, {
+      snapshot = await generateDietPlanSnapshotForDateAsync(planDate, {
         reason: options.reason || "initial",
-        planConstraints: constraints
+        planConstraints: constraints,
+        rangeDates: dates
       });
       const result = await persistDietPlanSnapshot(snapshot, {
         skipBackend: !backendAvailable,
@@ -946,10 +1482,13 @@ async function loadOrGenerateDietPlanForDate(planDate, options = {}) {
   let snapshot = options.forceRegenerate
     ? null
     : state.dietCalendar.savedDates[normalizedDate] || readLocalDietPlanSnapshot(normalizedDate);
+  snapshot = options.forceRegenerate
+    ? null
+    : getUsableDietPlanSnapshot(snapshot, normalizedDate, "本地/数据库中");
 
   if (!snapshot?.plans?.length && state.auth.token && !options.forceRegenerate) {
     try {
-      snapshot = await fetchDietPlanFromDb(normalizedDate);
+      snapshot = getUsableDietPlanSnapshot(await fetchDietPlanFromDb(normalizedDate), normalizedDate, "数据库中");
       if (snapshot) {
         state.dietCalendar.savedDates[normalizedDate] = snapshot;
         saveLocalDietPlanSnapshot(snapshot);
@@ -961,9 +1500,10 @@ async function loadOrGenerateDietPlanForDate(planDate, options = {}) {
   }
 
   if (!snapshot?.plans?.length) {
-    snapshot = generateDietPlanSnapshotForDate(normalizedDate, {
+    snapshot = await generateDietPlanSnapshotForDateAsync(normalizedDate, {
       reason: options.reason || (options.forceRegenerate ? "regenerate" : "initial"),
-      planConstraints: options.forceRegenerate ? state.planConstraints : createEmptyPlanConstraints()
+      planConstraints: options.forceRegenerate ? state.planConstraints : createEmptyPlanConstraints(),
+      rangeDates: options.rangeDates || getPlanDateRange()
     });
     const result = await persistDietPlanSnapshot(snapshot);
     snapshot = result.snapshot;
@@ -1637,7 +2177,7 @@ function initEventListeners() {
     regeneratePlansBtn.addEventListener("click", handleRegeneratePlans);
   }
 
-  // 营销推广 Tab 切换
+  // 计划分享 Tab 切换
   document.querySelectorAll(".marketing-tab-btn").forEach(btn => {
     btn.addEventListener("click", (e) => {
       const tabButton = e.currentTarget;
@@ -1647,7 +2187,7 @@ function initEventListeners() {
       
       tabButton.classList.add("active");
       document.getElementById(`market-${platform}`).classList.add("active");
-      addSystemLog("market", `已切换到【${tabButton.innerText}】生成面板。`);
+      addSystemLog("market", `已切换到【${tabButton.innerText}】分享面板。`);
     });
   });
 
@@ -1655,24 +2195,46 @@ function initEventListeners() {
   document.querySelectorAll(".copy-btn").forEach(btn => {
     btn.addEventListener("click", () => {
       const targetId = btn.getAttribute("data-target");
-      const textToCopy = document.getElementById(targetId).innerText;
+      const targetEl = document.getElementById(targetId);
+      const textToCopy = targetEl ? targetEl.innerText : "";
       
       copyTextToClipboard(textToCopy).then(() => {
-        const origText = btn.innerHTML;
-        btn.innerHTML = `<span>✓</span> <span>已复制成功！</span>`;
-        btn.classList.add("copied");
+        flashCopyButton(btn, `<span>✓</span> <span>已复制成功！</span>`, "copied");
         addSystemLog("system", `已将生成的内容成功复制到剪贴板。`);
-        
-        setTimeout(() => {
-          btn.innerHTML = origText;
-          btn.classList.remove("copied");
-        }, 2000);
       }).catch(err => {
-        console.error("复制失败: ", err);
-        alert("复制失败，请手动选择复制。");
+        console.warn("复制失败，已尝试选中文案: ", err);
+        const selected = selectTextElement(targetEl);
+        flashCopyButton(
+          btn,
+          selected
+            ? `<span>!</span> <span>已选中文案，请按 Ctrl+C</span>`
+            : `<span>!</span> <span>请手动复制文案</span>`,
+          "manual-copy"
+        );
+        addSystemLog(
+          "system",
+          selected
+            ? "浏览器拒绝直接写入剪贴板，已自动选中文案，可按 Ctrl+C 复制。"
+            : "浏览器拒绝直接写入剪贴板，请手动选择文案复制。"
+        );
       });
     });
   });
+
+  const sharePlanBtn = document.getElementById("sharePlanBtn");
+  if (sharePlanBtn) {
+    sharePlanBtn.addEventListener("click", () => {
+      goToSharePage();
+    });
+  }
+
+  const backToIngredientsBtn = document.getElementById("backToIngredientsBtn");
+  if (backToIngredientsBtn) {
+    backToIngredientsBtn.addEventListener("click", () => {
+      goToStep(4);
+      addSystemLog("ingredient", "已返回分类食材采购清单。");
+    });
+  }
 
   // 重新开始按钮
   const restartBtn = document.getElementById("restartBtn");
@@ -1729,19 +2291,19 @@ function initEventListeners() {
     });
   }
 
-  // 宣传视频生成按钮
+  // 计划打卡视频生成按钮
   const genVideoBtn = document.getElementById("generateVideoBtn");
   if (genVideoBtn) {
     genVideoBtn.addEventListener("click", startVideoRecording);
   }
 
-  // 描述包下载按钮
+  // 分享数据包下载按钮
   const downloadPackBtn = document.getElementById("downloadPublishPackBtn");
   if (downloadPackBtn) {
     downloadPackBtn.addEventListener("click", downloadPublishPackage);
   }
 
-  // 机器人指南弹窗
+  // 个人平台分享助手弹窗
   const openDialogBtn = document.getElementById("openPublishDialogBtn");
   if (openDialogBtn) {
     openDialogBtn.addEventListener("click", () => {
@@ -1752,6 +2314,11 @@ function initEventListeners() {
         alert("当前浏览器不支持原生弹窗，请查看页面中的发布助手说明。");
       }
     });
+  }
+
+  const reevaluatePlansBtn = document.getElementById("reevaluatePlansBtn");
+  if (reevaluatePlansBtn) {
+    reevaluatePlansBtn.addEventListener("click", handleReevaluatePlans);
   }
 }
 
@@ -1803,7 +2370,7 @@ function initWeightSliders() {
       updateWeightTextDisplays();
       
       // 触发评估结果实时更新
-      if (state.currentStep === 4) {
+      if (state.currentStep === 3) {
         evaluatePlansRealtime();
       }
     });
@@ -1837,18 +2404,44 @@ function goToStep(step) {
   targetView.classList.add("active");
 
   // 更新进度条和高亮标题
-  const progressPercent = step * 20;
+  const progressPercent = step * 25;
   document.getElementById("progressBar").style.width = `${progressPercent}%`;
   
   const stepNames = [
     "基础健康问卷",
     "个性化膳食方案",
-    "分类食材采购清单",
     "方案量化评估",
-    "多平台推广文案"
+    "分类食材采购清单"
   ];
   document.getElementById("current-step-name").innerText = stepNames[step - 1];
 
+  if (step === 3 && state.plans.length) {
+    updateWeightTextDisplays();
+    evaluatePlansRealtime();
+    renderAiDebate();
+  }
+
+  if (step === 4 && state.plans.length) {
+    renderIngredients();
+  }
+
+}
+
+function goToSharePage() {
+  const shareView = document.getElementById("share-page");
+  if (!shareView) return;
+
+  prepareShareContent();
+
+  document.querySelectorAll(".step-view").forEach(view => {
+    view.classList.remove("active");
+  });
+  shareView.classList.add("active");
+
+  state.currentStep = 4;
+  document.getElementById("progressBar").style.width = "100%";
+  document.getElementById("current-step-name").innerText = "附加环节：计划分享与推广辅助";
+  addSystemLog("market", "已跳转到计划分享与推广辅助页面，可从左上角返回食材清单。");
 }
 
 // 带加载动画和日志的步骤流转
@@ -1866,22 +2459,9 @@ async function triggerStepTransition(targetStep) {
   if (targetStep === 2) {
     processingText.innerText = "正在读取或生成日期饮食规划...";
     syncPlanCalendarFromInputs();
-
-    apiSwitch.request("/api/v1/diet/plans", {
-      profile: state.formData,
-      edgeCompute: state.edgeCompute,
-      agentContext: state.formData.extraProfile,
-      planConstraints: state.planConstraints,
-      planPeriod: state.dietCalendar.period,
-      planStartDate: state.dietCalendar.startDate,
-      selectedDate: state.dietCalendar.selectedDate
-    }, {
-      source: "customer-manager",
-      target: "diet-planner"
-    });
     
     enqueueLog("client", "问卷收集完成，正在整理画像字段并排查过敏源。");
-    enqueueLog("switch", "用户健康画像已提交，正在生成膳食方案。");
+    enqueueLog("switch", "用户健康画像已提交，正在请求多 Agent 生成膳食方案。");
     enqueueLog("diet", "用户画像已生成。");
     enqueueLog("diet", `目标：${translateGoal(state.formData.goal)} | 饮食风格：${translateHabit(state.formData.dietHabit)}`);
     enqueueLog("diet", `过敏排除食材：${state.formData.allergies.length > 0 ? state.formData.allergies.map(translateAllergy).join('、') : '无'}`);
@@ -1907,9 +2487,9 @@ async function triggerStepTransition(targetStep) {
     enqueueLog("diet", `当前查看日期：${formatPlanDateLabel(state.dietCalendar.selectedDate)}。`);
     enqueueLog("diet", `多 Agent 讨论结论：${state.planDiscussion.consensus}`);
     if (state.plans.length >= 3) {
-      enqueueLog("diet", `已成功为您定制当前日期的3套侧重点不同的健康饮食方案：\n1. ${state.plans[0].name}\n2. ${state.plans[1].name}\n3. ${state.plans[2].name}`);
+      enqueueLog("diet", `已成功为您定制当前日期的3套侧重点不同的健康饮食方案：\n1. ${formatPlanLabelName(state.plans[0], 0)}\n2. ${formatPlanLabelName(state.plans[1], 1)}\n3. ${formatPlanLabelName(state.plans[2], 2)}`);
     }
-    enqueueLog("diet", `周期内 ${getPlanDateRange().length} 天计划已就绪，下一步将拆解当前日期的采购清单。`);
+    enqueueLog("diet", `周期内 ${getPlanDateRange().length} 天计划已就绪，下一步将对多方案进行量化评估。`);
     saveDataRecord("diet.plans.current", state.plans);
     
     setTimeout(() => {
@@ -1918,41 +2498,6 @@ async function triggerStepTransition(targetStep) {
     }, 2800);
 
   } else if (targetStep === 3) {
-    processingText.innerText = "正在拆解膳食结构，生成食材采购清单...";
-
-    apiSwitch.request("/api/v1/ingredients/list", {
-      activePlanIndex: state.activePlanIndex,
-      plans: state.plans.map(plan => ({ name: plan.name, meals: plan.meals })),
-      agentContext: state.formData.extraProfile,
-      planDate: state.dietCalendar.selectedDate,
-      planPeriod: state.dietCalendar.period
-    }, {
-      source: "diet-planner",
-      target: "ingredient-planner"
-    });
-    
-    enqueueLog("ingredient", "正在按方案拆解食材并折算用量。");
-    enqueueLog("ingredient", `分析配菜风格为：${translateRegion(state.formData.region)}...`);
-    
-    const allergiesStr = state.formData.allergies.map(translateAllergy).join('、');
-    if (state.formData.allergies.length > 0) {
-      enqueueLog("ingredient", `⚠️ 检测到避忌食材：[${allergiesStr}]。已开启食材替换算法，使用安全蛋白与主食替代。`);
-    }
-
-    enqueueLog("ingredient", "已对3套方案分别计算出：生鲜肉蛋奶类、时令蔬菜水果类、膳食粗粮谷物类以及调味耗材的具体用量。");
-    enqueueLog("switch", "食材清单已生成，准备进入方案评估。");
-    enqueueLog("ingredient", "食材清单规划完成，并加入高温储鲜与保水防潮建议。");
-    saveDataRecord("ingredients.current", state.plans.map(plan => ({
-      name: plan.name,
-      ingredients: plan.ingredients
-    })));
-
-    setTimeout(() => {
-      goToStep(3);
-      renderIngredients();
-    }, 2400);
-
-  } else if (targetStep === 4) {
     processingText.innerText = "正在基于成本、地域和夏季时令进行多维评分...";
 
     apiSwitch.request("/api/v1/evaluation/score", {
@@ -1961,7 +2506,7 @@ async function triggerStepTransition(targetStep) {
       agentContext: state.formData.extraProfile,
       planDate: state.dietCalendar.selectedDate
     }, {
-      source: "ingredient-planner",
+      source: "diet-planner",
       target: "evaluation-engine"
     });
     
@@ -1972,42 +2517,78 @@ async function triggerStepTransition(targetStep) {
     enqueueLog("switch", "正在从可执行性、营养结构和量化约束三个角度进行独立复核。");
 
     setTimeout(() => {
-      goToStep(4);
+      goToStep(3);
       evaluatePlansRealtime();
       runAiDebateForPlans();
       enqueueLog("eval", `打分已就绪！当前判定综合得分最高的是：【${state.plans[state.selectedPlanIndex].name}】。`);
-      enqueueLog("eval", "用户可手动调节权重滑块重新评估。确定最终方案后将生成多平台文案。");
+      enqueueLog("eval", "用户可手动调节权重滑块重新评估。确定最终方案后，将为该方案生成采购清单。");
     }, 2500);
 
-  } else if (targetStep === 5) {
-    processingText.innerText = "正在提取膳食亮点，撰写多渠道宣传推广内容...";
+  } else if (targetStep === 4) {
+    processingText.innerText = "正在基于最终推荐方案生成食材采购清单...";
+    state.activePlanIndex = state.selectedPlanIndex;
 
-    apiSwitch.request("/api/v1/marketing/content", {
-      selectedPlanIndex: state.selectedPlanIndex,
-      selectedPlan: state.plans[state.selectedPlanIndex],
+    const ingredientResponsePromise = apiSwitch.request("/api/v1/ingredients/list", {
+      activePlanIndex: state.selectedPlanIndex,
+      plans: state.plans.map(plan => ({
+        name: plan.name,
+        meals: plan.meals,
+        ingredients: plan.ingredients,
+        macros: plan.macros,
+        calories: plan.calories
+      })),
       agentContext: state.formData.extraProfile,
-      planDate: state.dietCalendar.selectedDate
+      planDate: state.dietCalendar.selectedDate,
+      planPeriod: state.dietCalendar.period
     }, {
       source: "evaluation-engine",
-      target: "marketing-writer"
+      target: "ingredient-planner"
     });
     
-    enqueueLog("market", `最终选定食谱：【${state.plans[state.selectedPlanIndex].name}】。`);
-    enqueueLog("market", "开始提取核心亮点：低热量、营养均衡、风味特色...");
-    enqueueLog("market", "✍️ 正在撰写小红书种草软文：结合流行表情符号及健康标签...");
-    enqueueLog("market", "🎬 正在编写抖音短视频分镜头脚本：设计画面运镜、旁白、BGM卡点...");
-    enqueueLog("market", "📰 正在排版微信公众号科普长文：解析人体能量代谢与膳食配比原理...");
+    enqueueLog("ingredient", `已锁定最终推荐方案：【${state.plans[state.selectedPlanIndex].name}】。`);
+    enqueueLog("ingredient", "正在按最终方案拆解食材并折算采购用量。");
+    enqueueLog("ingredient", `分析配菜风格为：${translateRegion(state.formData.region)}...`);
     
+    const allergiesStr = state.formData.allergies.map(translateAllergy).join('、');
+    if (state.formData.allergies.length > 0) {
+      enqueueLog("ingredient", `⚠️ 检测到避忌食材：[${allergiesStr}]。已开启食材替换算法，使用安全蛋白与主食替代。`);
+    }
+
+    try {
+      const ingredientResponse = await ingredientResponsePromise;
+      if (ingredientResponse.ok && hasUsableIngredients(ingredientResponse.data?.ingredients)) {
+        state.plans[state.selectedPlanIndex].ingredients = normalizePlanIngredients(ingredientResponse.data.ingredients);
+        state.plans[state.selectedPlanIndex].ingredientMode = ingredientResponse.data.mode || "mock";
+        enqueueLog(
+          "ingredient",
+          ingredientResponse.data.mode === "real"
+            ? "大模型食材 Agent 已按最终方案重新折算采购清单。"
+            : ingredientResponse.data.mode === "fallback"
+              ? "大模型食材 Agent 调用失败，已使用 fallback 采购清单。"
+              : "Mock 食材 Agent 已生成采购清单。"
+        );
+      }
+    } catch (err) {
+      enqueueLog("ingredient", `食材 Agent 暂不可用，继续使用方案内置采购清单：${err.message || "未知错误"}`);
+    }
+
+    enqueueLog("ingredient", "已计算出生鲜肉蛋奶类、时令蔬菜水果类、膳食粗粮谷物类以及调味耗材的具体用量。");
+    enqueueLog("switch", "最终方案采购清单已生成，下一步可保存或分享本次计划。");
+    enqueueLog("ingredient", "食材清单规划完成，并加入高温储鲜与保水防潮建议。");
+    saveDataRecord("ingredients.current", state.plans.map(plan => ({
+      name: plan.name,
+      ingredients: plan.ingredients
+    })));
+
     setTimeout(() => {
-      goToStep(5);
-      generateMarketingTexts();
-      enqueueLog("market", "所有平台的推广文案与视频脚本生成完毕，支持一键复制。");
-    }, 2800);
+      goToStep(4);
+      renderIngredients();
+    }, 2400);
   }
 }
 
 // 提交表单处理
-function handleFormSubmit() {
+async function handleFormSubmit() {
   const form = document.getElementById("healthForm");
   if (!form.checkValidity()) {
     form.reportValidity();
@@ -2018,20 +2599,39 @@ function handleFormSubmit() {
   renderAdditionalProfilePreview(state.formData.extraProfile);
   state.planConstraints = createEmptyPlanConstraints();
   state.planDiscussion = createEmptyPlanDiscussion();
+  state.dietCalendar.savedDates = {};
+  state.dietCalendar.lastSource = "new";
 
   computeEdgeProfile(state.formData);
   saveDataRecord(getCurrentProfileRecordKey(), state.formData);
   saveDataRecord("profile.extra.current", state.formData.extraProfile);
   persistAuthenticatedProfile(state.formData);
-  apiSwitch.request("/api/v1/profile/create", state.formData, {
-    source: "ui-controller",
-    target: "customer-manager"
-  });
   enqueueLog("data", "用户画像已保存，后续步骤可继续复用。");
   if (hasAdditionalProfile(state.formData.extraProfile)) {
     enqueueLog("client", "补充文本与提取结果已加入用户画像。");
   }
   enqueueLog("switch", "画像创建请求已进入处理队列。");
+
+  try {
+    const profileResponse = await apiSwitch.request("/api/v1/profile/create", state.formData, {
+      source: "ui-controller",
+      target: "customer-manager"
+    });
+    if (profileResponse.ok && profileResponse.data) {
+      state.formData.agentProfile = profileResponse.data.agentProfile || {};
+      saveDataRecord("profile.agent.current", profileResponse.data);
+      enqueueLog(
+        "client",
+        profileResponse.data.mode === "real"
+          ? "大模型客户经理 Agent 已完成用户画像整理。"
+          : profileResponse.data.mode === "fallback"
+            ? "大模型客户经理 Agent 调用失败，已使用 fallback 用户画像。"
+            : "Mock 客户经理 Agent 已完成用户画像整理。"
+      );
+    }
+  } catch (err) {
+    enqueueLog("client", `客户经理 Agent 暂不可用，继续使用本地画像：${err.message || "未知错误"}`);
+  }
 
   // 开启流转动画，进入膳食方案生成
   triggerStepTransition(2);
@@ -2212,16 +2812,87 @@ function calculateAndGenerateDietData(options = {}) {
     }
   ];
 
-  applyPlanDateVariation(options.planDate || state.dietCalendar.selectedDate);
+  applyPlanDateVariation(options.planDate || state.dietCalendar.selectedDate, options);
   finalizeGeneratedPlans(options);
 }
 
-function applyPlanDateVariation(planDate) {
+function mealHasPinnedConstraint(planIndex, mealName) {
+  return state.planConstraints.pinnedDishes.some(item => (
+    item.planIndex === planIndex && item.mealName === mealName
+  ));
+}
+
+function getMealPrimaryDish(food) {
+  return splitMealDishes(food)[0] || String(food || "");
+}
+
+function mealLooksRepeated(food, previousFoods = []) {
+  const primary = normalizeDishText(getMealPrimaryDish(food));
+  if (!primary) return false;
+
+  return previousFoods.some(previous => {
+    const previousPrimary = normalizeDishText(getMealPrimaryDish(previous));
+    if (!previousPrimary) return false;
+    if (primary === previousPrimary) return true;
+    if (primary.length >= 4 && previousPrimary.includes(primary)) return true;
+    return previousPrimary.length >= 4 && primary.includes(previousPrimary);
+  });
+}
+
+function collectPreviousMealFoods(dateContext, planIndex = null, mealIndex = null) {
+  const summaries = Array.isArray(dateContext?.previousPlanSummaries)
+    ? dateContext.previousPlanSummaries
+    : [];
+
+  return summaries.flatMap(summary => (
+    (Array.isArray(summary?.plans) ? summary.plans : []).flatMap((plan, currentPlanIndex) => {
+      if (planIndex !== null && currentPlanIndex !== planIndex) return [];
+      const meals = Array.isArray(plan?.meals) ? plan.meals : [];
+      if (mealIndex !== null) return meals[mealIndex] ? [meals[mealIndex]] : [];
+      return meals;
+    })
+  )).filter(Boolean);
+}
+
+function selectDateRotatedMeal(meal, planIndex, mealIndex, seed, previousFoods = []) {
+  if (mealHasPinnedConstraint(planIndex, meal.name)) return meal.food;
+
+  const profile = state.formData;
+  const candidates = getMealReplacementOptions(meal.name, profile, planIndex)
+    .filter(option => (
+      !dishMatchesDeleted(option)
+      && !dishViolatesAvoids(option, profile)
+    ));
+  if (!candidates.length) return meal.food;
+
+  const freshCandidates = candidates.filter(option => !mealLooksRepeated(option, previousFoods));
+  const list = freshCandidates.length ? freshCandidates : candidates;
+  const currentPrimary = normalizeDishText(getMealPrimaryDish(meal.food));
+  const offset = Math.abs(seed + planIndex * 11 + mealIndex * 7) % list.length;
+
+  for (let i = 0; i < list.length; i += 1) {
+    const candidate = list[(offset + i) % list.length];
+    if (normalizeDishText(getMealPrimaryDish(candidate)) !== currentPrimary) {
+      return candidate;
+    }
+  }
+
+  return list[offset] || meal.food;
+}
+
+function appendDateSideDish(food, extra) {
+  const dishes = splitMealDishes(food);
+  const hasExtra = dishes.some(dish => normalizeDishText(dish) === normalizeDishText(extra));
+  return hasExtra ? joinMealDishes(dishes) : joinMealDishes([...dishes, extra]);
+}
+
+function applyPlanDateVariation(planDate, options = {}) {
   const normalizedDate = normalizeIsoDate(planDate || getTodayIsoDate());
   const revisionOffset = Number(state.planConstraints?.revision || 0) * 17;
   const seed = getPlanDateSeed(normalizedDate) + revisionOffset;
   const weekday = getPlanWeekday(normalizedDate);
   const dateText = formatPlanDateShort(normalizedDate);
+  const dateContext = options.dateContext || buildPlanDateContext(normalizedDate, options);
   const additions = {
     "早餐": ["奇亚籽5g", "蓝莓50g", "焯菠菜80g", "无糖黑咖啡1杯", "猕猴桃半个"],
     "午餐": ["冬瓜海带汤1碗", "凉拌番茄120g", "紫菜蛋花汤1碗", "清炒生菜150g", "菌菇汤1碗"],
@@ -2231,21 +2902,69 @@ function applyPlanDateVariation(planDate) {
 
   state.plans.forEach((plan, planIndex) => {
     plan.planDate = normalizedDate;
-    plan.sub = `${plan.sub} · ${dateText} ${weekday}`;
+    const baseSub = String(plan.sub || "多 Agent 生成").replace(/\s*·\s*\d{2}\/\d{2}.*$/, "");
+    plan.sub = `${baseSub} · ${dateText} ${weekday}`;
     plan.meals = plan.meals.map((meal, mealIndex) => {
-      const options = additions[meal.name] || additions["加餐"];
-      const extra = options[(seed + planIndex + mealIndex) % options.length];
-      const food = meal.food.includes(extra) ? meal.food : `${meal.food} + ${extra}`;
+      const additionOptions = additions[meal.name] || additions["加餐"];
+      const extra = additionOptions[(seed + planIndex + mealIndex) % additionOptions.length];
+      const previousFoods = collectPreviousMealFoods(dateContext, planIndex, mealIndex);
+      const baseFood = selectDateRotatedMeal(meal, planIndex, mealIndex, seed, previousFoods);
       return {
         ...meal,
         planDate: normalizedDate,
-        food
+        food: appendDateSideDish(baseFood, extra)
       };
     });
+    if (options.resetIngredients) {
+      plan.ingredients = {};
+    }
   });
 }
 
+function ensureCrossDateMenuDiversity(planDate, options = {}) {
+  const normalizedDate = normalizeIsoDate(planDate || getTodayIsoDate());
+  const dateContext = options.dateContext || buildPlanDateContext(normalizedDate, options);
+  const revisionOffset = Number(state.planConstraints?.revision || 0) * 17;
+  const seed = getPlanDateSeed(normalizedDate) + revisionOffset + 37;
+  let changed = false;
+
+  state.plans.forEach((plan, planIndex) => {
+    let planChanged = false;
+    plan.planDate = normalizedDate;
+    plan.meals = plan.meals.map((meal, mealIndex) => {
+      const previousFoods = collectPreviousMealFoods(dateContext, planIndex, mealIndex);
+      if (!mealLooksRepeated(meal.food, previousFoods)) {
+        return { ...meal, planDate: normalizedDate };
+      }
+
+      const replacement = selectDateRotatedMeal(meal, planIndex, mealIndex, seed, previousFoods);
+      if (normalizeDishText(replacement) === normalizeDishText(meal.food)) {
+        return { ...meal, planDate: normalizedDate };
+      }
+
+      changed = true;
+      planChanged = true;
+      return {
+        ...meal,
+        planDate: normalizedDate,
+        food: replacement,
+        replacedByAgent: true
+      };
+    });
+
+    if (planChanged) {
+      plan.ingredients = {};
+    }
+  });
+
+  if (changed) {
+    addSystemLog("diet", `${formatPlanDateLabel(normalizedDate)} 已根据前几天菜单自动调整重复主餐。`);
+  }
+}
+
 function finalizeGeneratedPlans(options = {}) {
+  state.plans = ensurePlanNamesUseAngles(state.plans);
+  state.plans = calibratePlanScoresByAngle(state.plans);
   state.plans.forEach((plan, planIndex) => {
     plan.meals = plan.meals.map((meal, mealIndex) => ({
       ...meal,
@@ -2402,6 +3121,10 @@ function getMealReplacementOptions(mealName, profile, planIndex) {
   const protein = isVegan ? "香煎豆腐" : "去皮鸡胸肉";
   const drink = avoidDairy || isVegan ? "无糖豆浆" : "低脂酸奶";
   const grain = avoidGluten ? "藜麦饭" : "全麦饭团";
+  const warmGrain = avoidGluten ? "糙米饭" : "杂粮饭";
+  const quickGrain = avoidGluten ? "玉米段" : "全麦贝果半个";
+  const proteinAlt = isVegan ? "鹰嘴豆" : "鸡蛋白";
+  const proteinLight = isVegan ? "毛豆仁" : "低脂鸡肉丁";
   const regionFlavor = {
     south: ["清蒸", "白灼", "荷塘"],
     north: ["番茄炖", "葱香", "杂粮"],
@@ -2412,22 +3135,38 @@ function getMealReplacementOptions(mealName, profile, planIndex) {
   const breakfast = [
     `${drink}1杯 + ${avoidGluten ? "蒸紫薯" : "燕麦"} + ${isVegan ? "卤水豆腐" : "水煮蛋"}`,
     `${grain} + 圣女果 + ${drink}`,
-    `${isVegan ? "鹰嘴豆泥" : "鸡蛋蔬菜卷"} + 黄瓜条 + 无糖茶`
+    `${isVegan ? "鹰嘴豆泥" : "鸡蛋蔬菜卷"} + 黄瓜条 + 无糖茶`,
+    `${avoidGluten ? "南瓜藜麦粥" : "燕麦鸡蛋杯"} + 焯青菜 + 无糖茶`,
+    `${isVegan ? "豆腐蔬菜卷" : "鸡胸蔬菜卷"} + 小番茄 + ${drink}`,
+    `${avoidGluten ? "红薯块" : "全麦吐司1片"} + ${proteinAlt} + 生菜`,
+    `${avoidGluten ? "玉米燕麦糊" : "杂粮馒头半个"} + ${isVegan ? "拌豆腐" : "蒸蛋羹"} + 黄瓜条`
   ];
   const lunch = [
     `${regionFlavor[0]}${protein}配西兰花 + ${avoidGluten ? "糙米饭" : "杂粮饭"}`,
     `${regionFlavor[1] || "清炒"}菌菇时蔬 + ${isVegan ? "毛豆" : "鸡肉丁"}`,
-    `番茄豆腐${isVegan ? "鹰嘴豆" : "鸡肉"}碗 + 凉拌黄瓜`
+    `番茄豆腐${isVegan ? "鹰嘴豆" : "鸡肉"}碗 + 凉拌黄瓜`,
+    `${regionFlavor[2] || "清爽"}莲藕荷兰豆 + ${proteinLight} + ${warmGrain}`,
+    `冬瓜菌菇汤 + ${isVegan ? "香煎豆腐" : "香煎鸡胸"} + ${avoidGluten ? "藜麦饭" : "荞麦面小份"}`,
+    `彩椒西兰花炒${isVegan ? "豆干" : "鸡蛋白"} + ${quickGrain}`,
+    `番茄生菜能量碗 + ${isVegan ? "鹰嘴豆" : "鸡胸肉丝"} + ${warmGrain}`
   ];
   const dinner = [
     `${regionFlavor[2] || "清爽"}时蔬汤 + ${protein}`,
     `番茄菌菇豆腐汤 + ${avoidGluten ? "玉米" : "小份杂粮面"}`,
-    `${isVegan ? "豆腐藜麦沙拉" : "柠檬鸡肉沙拉"} + 水煮菜心`
+    `${isVegan ? "豆腐藜麦沙拉" : "柠檬鸡肉沙拉"} + 水煮菜心`,
+    `丝瓜蛋白汤 + ${isVegan ? "毛豆拌菜" : "鸡肉蔬菜碗"}`,
+    `蒸南瓜 + 清炒油麦菜 + ${isVegan ? "豆腐块" : "鸡蛋羹"}`,
+    `冬瓜海带汤 + ${isVegan ? "鹰嘴豆沙拉" : "鸡胸肉片"} + 小份${avoidGluten ? "糙米饭" : "杂粮饭"}`,
+    `菌菇青菜汤 + ${isVegan ? "豆干丝" : "低脂鸡肉丸"} + 凉拌黄瓜`
   ];
   const snack = [
     "小番茄 + 无糖茶",
     avoidDairy || isVegan ? "无糖椰子酸奶" : "希腊酸奶",
-    "苹果半个 + 黄瓜条"
+    "苹果半个 + 黄瓜条",
+    "猕猴桃半个 + 温水",
+    "黄瓜条 + 无糖黑咖啡",
+    "蓝莓50g + 无糖茶",
+    avoidDairy || isVegan ? "无糖豆浆半杯" : "低脂奶酪小份"
   ];
 
   if (mealName.includes("早餐")) return breakfast;
@@ -2553,19 +3292,19 @@ function getPlanBlueprints(goal, dietHabit) {
   if (dietHabit === "vegan") {
     return [
       {
-        name: "方案 A：植物蛋白轻盈膳食",
+        name: "植物蛋白轻盈餐",
         sub: "以豆制品、菌菇和低 GI 主食构成的清爽纯素方案",
         calorieFactor: goal === "gain-muscle" ? 1.02 : 0.95,
         macros: { carbs: 38, protein: 32, fat: 30 }
       },
       {
-        name: "方案 B：高纤谷豆能量餐",
+        name: "高纤谷豆饱腹餐",
         sub: "谷物、豆类与时令蔬菜组合，强调饱腹和稳定能量",
         calorieFactor: 1,
         macros: { carbs: 52, protein: 24, fat: 24 }
       },
       {
-        name: "方案 C：地中海纯素优脂餐",
+        name: "纯素优脂时令餐",
         sub: "橄榄油、坚果替代和番茄类食材提升抗氧化摄入",
         calorieFactor: 1.04,
         macros: { carbs: 42, protein: 24, fat: 34 }
@@ -2576,19 +3315,19 @@ function getPlanBlueprints(goal, dietHabit) {
   if (goal === "gain-muscle") {
     return [
       {
-        name: "方案 A：高蛋白增肌训练餐",
+        name: "高蛋白训练修复餐",
         sub: "提高优质蛋白摄入，适合训练日肌肉修复",
         calorieFactor: 1.05,
         macros: { carbs: 40, protein: 35, fat: 25 }
       },
       {
-        name: "方案 B：复合碳水恢复餐",
+        name: "复合碳水恢复餐",
         sub: "用慢糖谷物和高纤蔬菜支持训练后的糖原恢复",
         calorieFactor: 1,
         macros: { carbs: 48, protein: 32, fat: 20 }
       },
       {
-        name: "方案 C：地中海优脂增肌餐",
+        name: "优脂增肌能量餐",
         sub: "用优质脂肪和高密度蛋白提升热量质量",
         calorieFactor: 1.1,
         macros: { carbs: 35, protein: 33, fat: 32 }
@@ -2599,19 +3338,19 @@ function getPlanBlueprints(goal, dietHabit) {
   if (goal === "low-gi" || dietHabit === "low-carb") {
     return [
       {
-        name: "方案 A：低 GI 稳糖低碳餐",
+        name: "低 GI 稳糖低碳餐",
         sub: "控制精制碳水，用蛋白和优质脂肪稳定餐后血糖",
         calorieFactor: 0.95,
         macros: { carbs: 28, protein: 38, fat: 34 }
       },
       {
-        name: "方案 B：高纤慢糖平衡餐",
+        name: "高纤慢糖平衡餐",
         sub: "保留必要复合碳水，提升膳食纤维和饱腹感",
         calorieFactor: 1,
         macros: { carbs: 42, protein: 32, fat: 26 }
       },
       {
-        name: "方案 C：地中海稳糖轻食",
+        name: "优脂轻食稳糖餐",
         sub: "以番茄、橄榄油和低加工主食构建温和控糖餐",
         calorieFactor: 1.02,
         macros: { carbs: 35, protein: 30, fat: 35 }
@@ -2622,19 +3361,19 @@ function getPlanBlueprints(goal, dietHabit) {
   if (dietHabit === "mediterranean") {
     return [
       {
-        name: "方案 A：清爽控脂地中海餐",
+        name: "控脂高蛋白地中海餐",
         sub: "在热量可控前提下提高鱼禽和蔬菜占比",
         calorieFactor: 0.96,
         macros: { carbs: 35, protein: 35, fat: 30 }
       },
       {
-        name: "方案 B：高纤谷物地中海餐",
+        name: "全谷高纤地中海餐",
         sub: "用全谷物和时令果蔬提供稳定饱腹感",
         calorieFactor: 1,
         macros: { carbs: 48, protein: 28, fat: 24 }
       },
       {
-        name: "方案 C：经典地中海优脂餐",
+        name: "经典优脂地中海餐",
         sub: "突出橄榄油、番茄、鱼类和坚果的抗氧化优势",
         calorieFactor: 1.04,
         macros: { carbs: 38, protein: 28, fat: 34 }
@@ -2644,19 +3383,19 @@ function getPlanBlueprints(goal, dietHabit) {
 
   return [
     {
-      name: "方案 A：轻盈减脂低碳膳食",
+      name: "高蛋白稳态减脂餐",
       sub: "专注控制升糖与胰岛素，适合减碳需求",
       calorieFactor: 0.95,
       macros: { carbs: 25, protein: 45, fat: 30 }
     },
     {
-      name: "方案 B：黄金膳食纤维能量餐",
+      name: "高纤慢糖饱腹餐",
       sub: "以复合谷物与高膳食纤维为主，饱腹感强",
       calorieFactor: 1,
       macros: { carbs: 50, protein: 30, fat: 20 }
     },
     {
-      name: "方案 C：地中海慢享低脂食谱",
+      name: "优脂时令轻食餐",
       sub: "以富含单不饱和脂肪酸与抗氧化食材为特色",
       calorieFactor: 1.05,
       macros: { carbs: 35, protein: 30, fat: 35 }
@@ -2930,8 +3669,8 @@ function renderDietPlans() {
     const tab = document.createElement("div");
     tab.className = `plan-tab ${idx === state.activePlanIndex ? "active" : ""}`;
     tab.innerHTML = `
-      <div class="plan-tab-title">${plan.name}</div>
-      <div class="plan-tab-sub">${plan.calories} kcal | ${plan.sub}</div>
+      <div class="plan-tab-title">${formatPlanLabelName(plan, idx)}</div>
+      <div class="plan-tab-sub">${plan.calories} kcal | ${plan.angleLabel || getPlanAngleMeta(idx).label} | ${plan.sub}</div>
       <div class="plan-tab-score">Agent 共识 ${plan.agentScore || "--"} 分</div>
     `;
     tab.addEventListener("click", () => {
@@ -2942,7 +3681,7 @@ function renderDietPlans() {
         else t.classList.remove("active");
       });
       showPlanDetails(idx);
-      addSystemLog("diet", `用户切换查看【${plan.name}】的详细三餐构成。`);
+      addSystemLog("diet", `用户切换查看【${formatPlanLabelName(plan, idx)}】的详细三餐构成。`);
     });
     container.appendChild(tab);
   });
@@ -3123,25 +3862,11 @@ async function handleRegeneratePlans() {
   addSystemLog("switch", `已提交 ${formatPlanDateLabel(planDate)} 重新生成请求：携带当前画像、补充文本、固定菜品与删除菜品。`);
   addSystemLog("diet", "多 Agent 正在重新讨论当天膳食方案。");
 
-  apiSwitch.request("/api/v1/diet/plans", {
-    profile: state.formData,
-    edgeCompute: state.edgeCompute,
-    agentContext: state.formData.extraProfile,
-    planConstraints: state.planConstraints,
-    planDate,
-    planPeriod: state.dietCalendar.period,
-    regenerate: true
-  }, {
-    source: "ui-controller",
-    target: "diet-planner",
-    latency: 110
-  });
-
   try {
-    await wait(650);
-    let snapshot = generateDietPlanSnapshotForDate(planDate, {
+    let snapshot = await generateDietPlanSnapshotForDateAsync(planDate, {
       reason: "regenerate",
-      planConstraints: state.planConstraints
+      planConstraints: state.planConstraints,
+      rangeDates: getPlanDateRange()
     });
     const result = await persistDietPlanSnapshot(snapshot);
     snapshot = result.snapshot;
@@ -3270,7 +3995,7 @@ function showPlanDetails(idx) {
   `;
 }
 
-// 步骤 3：渲染食材清单 (带勾选和折叠交互)
+// 步骤 4：渲染食材清单 (带勾选和折叠交互)
 function renderIngredients() {
   const activePlan = state.plans[state.activePlanIndex];
   const container = document.getElementById("ingredientsAccordion");
@@ -3280,7 +4005,7 @@ function renderIngredients() {
 
   const tipText = document.getElementById("ingredientTipText");
   if (tipText) {
-    tipText.innerText = `以下是 ${formatPlanDateLabel(state.dietCalendar.selectedDate)} 方案【${activePlan.name}】对应的采购食材清单（已自动替换过敏食材并优先选择适宜的夏季时令食材）：`;
+    tipText.innerText = `以下是 ${formatPlanDateLabel(state.dietCalendar.selectedDate)}【${formatPlanLabelName(activePlan, state.activePlanIndex)}】对应的采购食材清单（已自动替换过敏食材并优先选择适宜的夏季时令食材）：`;
   }
 
   const categoryHeaders = {
@@ -3360,26 +4085,30 @@ function buildProviderReview(provider) {
       : { carbs: 42, protein: 32, fat: 26 };
 
   const planScores = state.plans.map((plan, idx) => {
+    const scores = normalizePlanScores(plan.scores);
+    const macros = normalizePlanMacros(plan.macros);
+    plan.scores = scores;
+    plan.macros = macros;
     const macroFit = clampScore(
       100
-      - Math.abs(plan.macros.carbs - idealMacros.carbs) * 0.8
-      - Math.abs(plan.macros.protein - idealMacros.protein) * 1.1
-      - Math.abs(plan.macros.fat - idealMacros.fat) * 0.7
+      - Math.abs(macros.carbs - idealMacros.carbs) * 0.8
+      - Math.abs(macros.protein - idealMacros.protein) * 1.1
+      - Math.abs(macros.fat - idealMacros.fat) * 0.7
     );
-    const executionFit = clampScore((plan.scores.cost * 0.45) + (plan.scores.season * 0.35) + (plan.scores.region * 0.2));
+    const executionFit = clampScore((scores.cost * 0.45) + (scores.season * 0.35) + (scores.region * 0.2));
 
     let score = 0;
     if (provider.id === "doubao") {
-      score = (plan.scores.region * 0.32) + (plan.scores.season * 0.26) + (executionFit * 0.24) + (macroFit * 0.18);
+      score = (scores.region * 0.32) + (scores.season * 0.26) + (executionFit * 0.24) + (macroFit * 0.18);
     } else if (provider.id === "qianwen") {
-      score = (macroFit * 0.36) + (plan.scores.region * 0.24) + (plan.scores.season * 0.22) + (plan.scores.cost * 0.18);
+      score = (macroFit * 0.36) + (scores.region * 0.24) + (scores.season * 0.22) + (scores.cost * 0.18);
     } else {
-      score = (plan.scores.cost * 0.3) + (macroFit * 0.3) + (plan.scores.season * 0.22) + (plan.scores.region * 0.18);
+      score = (scores.cost * 0.3) + (macroFit * 0.3) + (scores.season * 0.22) + (scores.region * 0.18);
     }
 
     return {
       idx,
-      planName: plan.name,
+      planName: formatPlanLabelName(plan, idx),
       score: clampScore(score),
       macroFit,
       executionFit
@@ -3403,16 +4132,61 @@ function buildProviderReview(provider) {
   };
 }
 
+async function handleReevaluatePlans() {
+  if (!state.plans.length) {
+    addSystemLog("eval", "暂无可评估方案，请先生成饮食方案。");
+    return;
+  }
+
+  const button = document.getElementById("reevaluatePlansBtn");
+  if (button?.disabled) return;
+
+  if (button) {
+    button.disabled = true;
+    button.innerText = "重新评估中...";
+  }
+
+  enqueueLog("eval", "已接收新的评估权重，正在重新生成方案量化评估。");
+  enqueueLog("eval", `当前推荐权重设为 -> 成本控制: ${state.weights.cost}% | 季节适宜: ${state.weights.season}% | 地域匹配: ${state.weights.region}%`);
+
+  try {
+    await apiSwitch.request("/api/v1/evaluation/score", {
+      weights: state.weights,
+      plans: state.plans.map((plan, index) => ({ name: formatPlanLabelName(plan, index), scores: plan.scores })),
+      agentContext: state.formData.extraProfile,
+      planDate: state.dietCalendar.selectedDate
+    }, {
+      source: "evaluation-panel",
+      target: "evaluation-engine"
+    });
+
+    evaluatePlansRealtime();
+    enqueueLog("eval", `评分看板已更新，当前推荐方案为：【${formatPlanLabelName(state.plans[state.selectedPlanIndex], state.selectedPlanIndex)}】。`);
+    enqueueLog("switch", "正在按新权重重新汇总多角度智能复核。");
+    await runAiDebateForPlans();
+    enqueueLog("eval", "重新评估完成，可继续进入食材清单规划。");
+  } catch (err) {
+    evaluatePlansRealtime();
+    enqueueLog("eval", `重新评估时后端暂不可用，已使用本地评分结果：${err.message || "未知错误"}`);
+  } finally {
+    if (button) {
+      button.disabled = false;
+      button.innerText = "重新生成方案量化评估";
+    }
+  }
+}
+
 function runAiDebateForPlans() {
-  if (!state.plans.length) return;
+  if (!state.plans.length) return Promise.resolve();
 
   renderAiDebate(true);
 
   const reviewCalls = serviceRegistry.cloudProviders.map(provider => {
     return apiSwitch.request("/api/v1/cloud/providers/review", {
       provider: provider.id,
-      plans: state.plans.map(plan => ({
-        name: plan.name,
+      plans: state.plans.map((plan, index) => ({
+        name: formatPlanLabelName(plan, index),
+        angleLabel: plan.angleLabel || getPlanAngleMeta(index).label,
         macros: plan.macros,
         scores: plan.scores
       })),
@@ -3432,7 +4206,7 @@ function runAiDebateForPlans() {
     });
   });
 
-  Promise.all(reviewCalls).then(reviews => {
+  return Promise.all(reviewCalls).then(reviews => {
     state.aiDebate.reviews = reviews;
     state.aiDebate.consensus = state.plans.map((plan, idx) => {
       const score = reviews.reduce((sum, review) => {
@@ -3441,7 +4215,7 @@ function runAiDebateForPlans() {
 
       return {
         idx,
-        name: plan.name,
+        name: formatPlanLabelName(plan, idx),
         score: clampScore(score)
       };
     });
@@ -3461,10 +4235,10 @@ function normalizeBackendProviderReview(data, provider) {
     latency: provider.latency,
     planScores: (data.scores || []).map(item => ({
       idx: item.idx,
-      planName: item.planName,
-      score: item.score,
-      macroFit: item.score,
-      executionFit: item.score
+      planName: item.planName || formatPlanLabelName(state.plans[item.idx], item.idx),
+      score: normalizeScoreValue(item.score, 80),
+      macroFit: normalizeScoreValue(item.macroFit ?? item.score, 80),
+      executionFit: normalizeScoreValue(item.executionFit ?? item.score, 80)
     })),
     note: data.note || "复核完成。"
   };
@@ -3530,9 +4304,10 @@ function getConsensusScoreForPlan(idx) {
   return consensus ? consensus.score : null;
 }
 
-// 步骤 4：实时加权打分与胜出方案推荐
+// 步骤 3：实时加权打分与胜出方案推荐
 function evaluatePlansRealtime() {
   if (!state.plans.length) return;
+  state.plans = calibratePlanScoresByAngle(ensurePlanNamesUseAngles(state.plans));
 
   const costWeight = state.weights.cost / 100;
   const seasonWeight = state.weights.season / 100;
@@ -3544,18 +4319,21 @@ function evaluatePlansRealtime() {
   const scoresOutput = [];
 
   state.plans.forEach((plan, idx) => {
+    const scores = normalizePlanScores(plan.scores);
+    plan.scores = scores;
+    plan.macros = normalizePlanMacros(plan.macros);
     // 归一化综合评分
     const ruleScore = Math.round(
-      (plan.scores.cost * costWeight) +
-      (plan.scores.season * seasonWeight) +
-      (plan.scores.region * regionWeight)
+      (scores.cost * costWeight) +
+      (scores.season * seasonWeight) +
+      (scores.region * regionWeight)
     );
     const consensusScore = getConsensusScoreForPlan(idx);
     const finalScore = consensusScore === null
       ? ruleScore
       : Math.round((ruleScore * 0.86) + (consensusScore * 0.14));
 
-    scoresOutput.push({ idx, name: plan.name, score: finalScore, ruleScore, consensusScore });
+    scoresOutput.push({ idx, name: plan.name, displayName: formatPlanLabelName(plan, idx), score: finalScore, ruleScore, consensusScore });
 
     if (finalScore > maxScore) {
       maxScore = finalScore;
@@ -3580,7 +4358,7 @@ function evaluatePlansRealtime() {
       <div class="score-row-header">
         <div class="score-row-title">
           <span>${isWinner ? "👑" : "⚪"}</span>
-          <span>${item.name}</span>
+          <span>${item.displayName}</span>
         </div>
         <div class="score-row-num">${item.score} 分</div>
       </div>
@@ -3600,7 +4378,7 @@ function evaluatePlansRealtime() {
   winnerBanner.innerHTML = `
     <div class="winner-banner-icon">🏆</div>
     <div>
-      <div style="font-weight: 700; color: #10B981; margin-bottom: 0.15rem;">推荐方案：${winnerPlan.name}</div>
+      <div style="font-weight: 700; color: #10B981; margin-bottom: 0.15rem;">推荐方案：${formatPlanLabelName(winnerPlan, winnerIndex)}</div>
       <div style="color: var(--text-secondary); line-height: 1.4;">
         在您当前的评估指标下，该方案表现最优。时令匹配度为 ${winnerPlan.scores.season}%，
         地域风味匹配度为 ${winnerPlan.scores.region}%${winnerConsensus === null ? "" : `，多 AI 共识分为 ${winnerConsensus} 分`}，能够最大程度满足预算与适宜性。
@@ -3611,12 +4389,87 @@ function evaluatePlansRealtime() {
   saveDataRecord("evaluation.current", {
     weights: state.weights,
     selectedPlanIndex: state.selectedPlanIndex,
-    selectedPlanName: winnerPlan.name,
+    selectedPlanName: formatPlanLabelName(winnerPlan, winnerIndex),
     scores: scoresOutput
   });
 }
 
-// 步骤 5：营销文案生成引擎 (自适应用户指标和方案结果)
+async function prepareShareContent(options = {}) {
+  const selectedPlan = state.plans[state.selectedPlanIndex];
+  if (!selectedPlan || !state.formData.age) return;
+
+  generateMarketingTexts();
+
+  try {
+    const response = await apiSwitch.request("/api/v1/marketing/content", {
+      selectedPlanIndex: state.selectedPlanIndex,
+      selectedPlan,
+      agentContext: state.formData.extraProfile,
+      planDate: state.dietCalendar.selectedDate
+    }, {
+      source: "ingredient-planner",
+      target: "sharing-writer"
+    });
+
+    if (response.ok && applyMarketingTextsFromAgent(response.data)) {
+      addSystemLog(
+        "market",
+        response.data.mode === "real"
+          ? "大模型内容 Agent 已生成用户分享和商家推广文案。"
+          : response.data.mode === "fallback"
+            ? "大模型内容 Agent 调用失败，已使用 fallback 文案。"
+            : "Mock 内容 Agent 已生成用户分享和商家推广文案。"
+      );
+    }
+  } catch (err) {
+    addSystemLog("market", `内容 Agent 暂不可用，继续使用本地模板：${err.message || "未知错误"}`);
+  }
+
+  if (!options.silent) {
+    addSystemLog("market", `已根据最终方案【${selectedPlan.name}】生成个人分享文案、打卡脚本和计划长文。`);
+  }
+}
+
+function applyMarketingTextsFromAgent(data) {
+  if (!data || typeof data !== "object") return false;
+  const mode = data.mode || "mock";
+  const isRealModelText = mode === "real";
+  const fields = [
+    ["copyBoxXhs", "xhsText"],
+    ["copyBoxVideo", "videoText"],
+    ["copyBoxGzh", "gzhText"],
+    ["copyBoxPromo", "promoText"]
+  ];
+  let applied = false;
+  fields.forEach(([elementId, key]) => {
+    const value = data[key];
+    const target = document.getElementById(elementId);
+    if (target && typeof value === "string" && value.trim()) {
+      const incomingText = value.trim();
+      const currentText = target.innerText.trim();
+      const keepLocalFullTemplate = !isRealModelText
+        && currentText.length >= 180
+        && currentText.length > incomingText.length;
+      if (keepLocalFullTemplate) return;
+      target.innerText = incomingText;
+      applied = true;
+    }
+  });
+  if (applied) {
+    saveDataRecord("sharing.current", {
+      selectedPlan: state.plans[state.selectedPlanIndex]?.name || "",
+      xhsText: document.getElementById("copyBoxXhs")?.innerText || "",
+      videoText: document.getElementById("copyBoxVideo")?.innerText || "",
+      gzhText: document.getElementById("copyBoxGzh")?.innerText || "",
+      promoText: document.getElementById("copyBoxPromo")?.innerText || "",
+      mode: data.mode || "mock",
+      providerId: data.providerId || ""
+    });
+  }
+  return applied;
+}
+
+// 计划分享生成引擎 (自适应用户指标和方案结果)
 function generateMarketingTexts() {
   const winnerPlan = state.plans[state.selectedPlanIndex];
   const f = state.formData;
@@ -3635,11 +4488,11 @@ function generateMarketingTexts() {
     Region: translateRegion(f.region)
   };
 
-  // 1. 小红书软文
-  const xhsText = `🔥 夏季清爽健康餐【${templateParams.PlanName}】真的很适合坚持！✨
+  // 1. 小红书个人分享文案
+  const xhsText = `📌 我的专属健康饮食计划：【${templateParams.PlanName}】✨
 
-姐妹们！夏天已经到了，想穿漂亮衣服又管不住嘴？赶紧看过来！
-我刚才根据自己的身高、体重、活动量、饮食禁忌和地域口味，定制了一套【${templateParams.PlanName}】，热量、营养比例和采购清单都安排好了，执行起来很省心！
+今天用系统根据我的身高、体重、活动量、健康目标、饮食禁忌和地域口味，生成了一套可以执行的饮食计划。
+这是一份个人健康管理记录：方案、热量、营养比例和采购清单都整理好了，方便后续复盘和打卡。
 
 📊 每日科学能量配比：
 - 每日预算：${templateParams.Calories} kcal
@@ -3654,46 +4507,46 @@ function generateMarketingTexts() {
 🛒 连食材采购清单都帮我规划好了，根本不用自己动脑折算！
 这次还特意筛选了【${templateParams.Region}】口味的当季食材，精打细算既省钱又新鲜，日常备餐更容易坚持！
 
-别再盲目节食了，科学饮食才能瘦得漂亮！快来Pick你的专属食谱吧！
-#健康减脂 #小红书爆款食谱 #控糖低卡 #夏季瘦身 #自律打卡 #我的健康生活`;
+接下来准备按这个方案执行一周，看看身体状态、饱腹感和备餐难度会不会更稳定。
+#健康饮食记录 #饮食计划打卡 #科学备餐 #我的健康生活 #AI饮食规划`;
 
-  // 2. 抖音脚本
-  const videoText = `🎬 抖音短视频脚本：《一套能坚持的夏季健康餐》
+  // 2. 短视频打卡脚本
+  const videoText = `🎬 短视频打卡脚本：《我的一日健康饮食计划》
 
 【BGM】：轻快、动感、充满活力的卡点音乐
 【视频时长】：30秒
-【适合调性】：时尚健康、自律日常、科技改变生活
+【适合调性】：真实记录、自律日常、健康管理
 
 ---
 🎥 【画面 1】
-- 画面：主角站在穿衣镜前，露出平坦的马甲线/身形，随后转头看向镜头，面带自信笑容。
-- 视觉提示：屏幕中央浮现花字：“减脂真的不需要挨饿！”
-- 旁白（声调上扬）：夏天要露肉？你还在每天靠水煮菜、啃黄瓜熬着吗？
+- 画面：手机打开健康饮食规划页面，镜头扫过个人画像和热量预算。
+- 视觉提示：屏幕中央浮现花字：“今天开始认真吃饭。”
+- 旁白：我给自己生成了一套更适合当前状态的饮食计划。
 
 🎥 【画面 2】
 - 画面：切入手机，特写健康饮食规划页面，展示个人画像、热量预算和三餐安排。
 - 视觉提示：显示“已生成专属方案”和“采购清单已就绪”。
-- 旁白：今天带大家看看我的秘密武器——根据个人画像定制的【${templateParams.PlanName}】！
+- 旁白：系统根据身高体重、活动量、目标和地域口味，推荐了【${templateParams.PlanName}】。
 
 🎥 【画面 3】
-- 画面：快速卡点切入三餐美食特写（香气扑鼻的少油主菜、翠绿的沙拉、五彩谷物饭）。
+- 画面：快速卡点切入三餐实拍或备餐画面。
 - 视觉提示：屏幕左侧打上能量卡片：${templateParams.Calories} kcal，营养比例均衡。
-- 旁白：早餐吃【${templateParams.Breakfast}】，午餐是饱腹感极强的【${templateParams.Lunch}】，晚餐只要吃【${templateParams.Dinner}】！热量控制在 ${templateParams.Calories} 大卡，越吃越瘦，根本不用饿肚子！
+- 旁白：早餐是【${templateParams.Breakfast}】，午餐安排【${templateParams.Lunch}】，晚餐是【${templateParams.Dinner}】。全天预算约 ${templateParams.Calories} 大卡。
 
 🎥 【画面 4】
 - 画面：主角拿着手机食材清单，在超市里开心地挑选新鲜果蔬。
-- 旁白：连食材采购量都自动折算好了，还针对夏季时令和预算做了评估，太懂打工人的钱包了！
+- 旁白：评估之后再生成采购清单，买什么、买多少会更明确。
 
 🎥 【画面 5】
-- 画面：主角微笑，点赞屏幕，屏幕弹出评论区引导。
-- 视觉提示：花字：“评论区留下【画像】，测试你的专属食谱！”
-- 旁白：想要同款低卡食谱？关注我，在评论区留下你的身高体重，AI马上帮你算！`;
+- 画面：展示今天的计划截图和备餐成果。
+- 视觉提示：花字：“记录第 1 天，看看能不能坚持一周。”
+- 旁白：先按这个计划执行几天，再回来复盘真实感受。`;
 
-  // 3. 微信公众号
-  const gzhText = `标题：如何利用【${templateParams.PlanName}】实现科学健康管理？
+  // 3. 计划长文记录
+  const gzhText = `标题：我的健康饮食计划记录：【${templateParams.PlanName}】
 
 引言：
-在健康管理日益个性化的今天，单一的“万能食谱”已无法满足现代人对口味、预算及季节性采购的复杂需求。本文将为您详细拆解【${templateParams.PlanName}】。该方案结合了营养科学、时令食材供应以及地域风味，提供了一套切实可行的膳食改善路径。
+这是一份面向个人执行和复盘的饮食计划记录。系统根据基础画像、健康目标、活动量、地域口味和饮食禁忌，生成多套方案并完成评估，最终推荐【${templateParams.PlanName}】。
 
 一、 画像分析与能量代谢指标
 系统首先根据身体指标、活动水平和健康目标估算能量摄入，并形成个性化营养结构。
@@ -3716,22 +4569,54 @@ function generateMarketingTexts() {
 系统根据方案生成了分类食材清单，并给出了针对夏季的高温防霉、储鲜防潮指南，确保食材新鲜度的同时也减少了食物浪费。
 
 结语：
-  科学饮食不是折磨，而是一场身体的重塑。通过个性化规划，我们能让繁琐的营养计算、食材采购和成本评估变得触手可及。欢迎转发分享这套食谱给有需要的朋友！`;
+科学饮食不是一份固定模板，而是一个不断记录、执行、复盘和调整的过程。接下来会按这套计划进行尝试，并根据真实体验继续优化。`;
+
+  const ingredientHighlights = Object.values(winnerPlan.ingredients || {})
+    .flat()
+    .map(item => typeof item === "string" ? item : item?.name)
+    .filter(Boolean)
+    .slice(0, 6)
+    .join("、") || "优质蛋白、时令蔬果、基础谷物和低负担调味";
+
+  // 4. 商家推广文案（可选，和用户分享分开）
+  const promoText = `【商家推广文案｜最终方案脱敏版】
+
+推广主题：${templateParams.PlanName} 健康餐组合
+
+这份文案只基于最终推荐方案的餐单、营养结构和采购清单生成，不包含姓名、年龄、身高、体重、联系方式、疾病史等个人健康信息。
+
+方案卖点：
+- 一日能量规划约 ${templateParams.Calories} kcal，适合做健康餐组合展示或营养搭配案例。
+- 营养结构清晰：碳水 ${templateParams.Carbs}% | 蛋白质 ${templateParams.Protein}% | 脂肪 ${templateParams.Fat}%。
+- 餐单完整：早餐「${templateParams.Breakfast}」，午餐「${templateParams.Lunch}」，晚餐「${templateParams.Dinner}」，加餐「${templateParams.Snack}」。
+- 采购清单可落地：重点食材包括 ${ingredientHighlights}，方便门店备货、套餐搭配或私域推荐。
+
+推荐发布文案：
+今天推荐一套可直接落地的健康饮食组合：【${templateParams.PlanName}】。它把三餐、加餐、热量预算和采购清单一起整理好，既方便用户照着执行，也方便商家做健康餐套餐、食材组合包或营养咨询展示。
+
+适用场景：
+健康餐定制 / 轻食套餐设计 / 食材采购搭配 / 私域用户服务 / 营养方案展示
+
+合规提示：
+正式推广时请使用脱敏案例和商家自有菜品图片；如引用真实用户计划，应先获得授权。`;
 
   // 填入 DOM 中
   const xhsBox = document.getElementById("copyBoxXhs");
   const videoBox = document.getElementById("copyBoxVideo");
   const gzhBox = document.getElementById("copyBoxGzh");
+  const promoBox = document.getElementById("copyBoxPromo");
 
   if (xhsBox) xhsBox.innerText = xhsText;
   if (videoBox) videoBox.innerText = videoText;
   if (gzhBox) gzhBox.innerText = gzhText;
+  if (promoBox) promoBox.innerText = promoText;
 
-  saveDataRecord("marketing.current", {
+  saveDataRecord("sharing.current", {
     selectedPlan: winnerPlan.name,
     xhsText,
     videoText,
-    gzhText
+    gzhText,
+    promoText
   });
 }
 
@@ -3754,7 +4639,7 @@ function addSystemLog(tag, message) {
     case "diet": tagClass = "diet"; tagLabel = "方案"; break;
     case "ingredient": tagClass = "ingredient"; tagLabel = "清单"; break;
     case "eval": tagClass = "eval"; tagLabel = "评估"; break;
-    case "market": tagClass = "market"; tagLabel = "文案"; break;
+    case "market": tagClass = "market"; tagLabel = "分享"; break;
     case "switch": tagClass = "switch"; tagLabel = "服务"; break;
     case "data": tagClass = "data"; tagLabel = "保存"; break;
   }
@@ -3792,7 +4677,7 @@ function processLogsQueue() {
   }, 400); // 400毫秒延迟打印下一行
 }
 
-// --- 视频录制与数据包导出模块 ---
+// --- 视频录制与分享数据包导出模块 ---
 
 let recordingCanvas = null;
 let canvasCtx = null;
@@ -3800,7 +4685,7 @@ let mediaRecorder = null;
 let recordedChunks = [];
 let animId = null;
 
-// 启动宣传视频录制生成流程
+// 启动计划打卡视频录制生成流程
 function startVideoRecording() {
   const btn = document.getElementById("generateVideoBtn");
   const progressContainer = document.getElementById("videoProgressContainer");
@@ -3810,7 +4695,7 @@ function startVideoRecording() {
 
   if (!btn || !progressContainer || !progressBar || !progressText) return;
   if (!selectedPlan) {
-    addSystemLog("market", "未找到最终方案，无法生成宣传视频。请先完成方案评估。");
+    addSystemLog("market", "未找到最终方案，无法生成计划打卡视频。请先完成方案评估。");
     return;
   }
 
@@ -3833,7 +4718,7 @@ function startVideoRecording() {
   progressBar.style.width = "0%";
   progressText.innerText = "0%";
 
-  addSystemLog("market", "正在构建离屏 Canvas 视频画幅，初始化 MediaRecorder 录像轨道...");
+  addSystemLog("market", "正在构建离屏 Canvas 分享视频画幅，初始化 MediaRecorder 录像轨道...");
 
   recordedChunks = [];
   
@@ -3853,7 +4738,7 @@ function startVideoRecording() {
     mediaRecorder = new MediaRecorder(stream, options);
   } catch (err) {
     btn.disabled = false;
-    btn.innerText = "🎬 1. 生成并录制宣传视频";
+    btn.innerText = "🎬 1. 生成计划打卡视频";
     progressContainer.style.display = "none";
     addSystemLog("market", `视频录制初始化失败：${err.message}`);
     return;
@@ -3874,18 +4759,18 @@ function startVideoRecording() {
     
     const downloadLink = document.createElement("a");
     downloadLink.href = videoURL;
-    downloadLink.download = "promo_video.webm";
+    downloadLink.download = "plan_share_video.webm";
     document.body.appendChild(downloadLink);
     downloadLink.click();
     document.body.removeChild(downloadLink);
 
-    addSystemLog("market", "🎬 宣传短视频已成功生成并自动触发浏览器下载：[promo_video.webm]。");
+    addSystemLog("market", "🎬 计划打卡短视频已成功生成并自动触发浏览器下载：[plan_share_video.webm]。");
     
     // 解禁后续按钮
     document.getElementById("downloadPublishPackBtn").disabled = false;
     document.getElementById("openPublishDialogBtn").disabled = false;
 
-    btn.innerText = "✓ 宣传视频已生成";
+    btn.innerText = "✓ 打卡视频已生成";
     progressContainer.style.display = "none";
   };
 
@@ -3947,7 +4832,7 @@ function startVideoRecording() {
     canvasCtx.fillStyle = '#EC4899';
     canvasCtx.font = 'bold 20px Outfit, "Microsoft YaHei"';
     canvasCtx.textAlign = 'center';
-    canvasCtx.fillText('个性化健康饮食推荐', 300, 95);
+    canvasCtx.fillText('我的健康饮食计划', 300, 95);
 
     // 绘制方案名称
     canvasCtx.fillStyle = '#F3F4F6';
@@ -3972,7 +4857,7 @@ function startVideoRecording() {
     canvasCtx.save();
     canvasCtx.translate(300, 300);
     canvasCtx.scale(scale, scale);
-    canvasCtx.fillText('🔥 扫码定制您的夏日专属健康食谱 🔥', 0, 0);
+    canvasCtx.fillText('记录今天的健康饮食计划', 0, 0);
     canvasCtx.restore();
 
     if (elapsed < duration) {
@@ -4001,16 +4886,16 @@ function drawRoundRect(ctx, x, y, width, height, radius) {
   ctx.closePath();
 }
 
-// 生成并下载本地机器人发布所需的 publish_data.json
+// 生成并下载个人平台分享助手所需的 share_data.json
 function downloadPublishPackage() {
   const activePlan = state.plans[state.selectedPlanIndex];
   if (!activePlan) {
-    addSystemLog("market", "未找到最终方案，无法导出发布包。");
+    addSystemLog("market", "未找到最终方案，无法导出分享数据包。");
     return;
   }
   
-  // 生成抖音定制文案
-  const dyText = `🎬 个性化定制的【${activePlan.name}】公开！每日摄入 ${activePlan.calories} 千卡，营养素配比精细，非常科学！#健康减脂 #小红书爆款食谱 #控糖低卡 #夏季瘦身 #自律打卡`;
+  // 生成个人短视频平台分享描述
+  const dyText = `🎬 我的【${activePlan.name}】健康饮食计划记录：每日约 ${activePlan.calories} 千卡，三餐安排和采购清单都整理好了，先按计划执行几天再复盘。#健康饮食记录 #饮食计划打卡 #科学备餐 #自律日常`;
   
   const xhsBox = document.getElementById("copyBoxXhs");
   const data = {
@@ -4021,10 +4906,10 @@ function downloadPublishPackage() {
   };
 
   apiSwitch.request("/api/v1/publish/package", data, {
-    source: "marketing-writer",
+    source: "sharing-writer",
     target: "publish-bot"
   });
-  saveDataRecord("publish.package", data);
+  saveDataRecord("sharing.package", data);
 
   const jsonStr = JSON.stringify(data, null, 2);
   const blob = new Blob([jsonStr], { type: 'application/json' });
@@ -4032,10 +4917,10 @@ function downloadPublishPackage() {
 
   const downloadLink = document.createElement("a");
   downloadLink.href = url;
-  downloadLink.download = "publish_data.json";
+  downloadLink.download = "share_data.json";
   document.body.appendChild(downloadLink);
   downloadLink.click();
   document.body.removeChild(downloadLink);
 
-  addSystemLog("market", "📦 发布包配置数据已导出为 [publish_data.json] 并开始下载。请将此文件与 WebM 视频放在同一目录。");
+  addSystemLog("market", "📦 分享数据包已导出为 [share_data.json] 并开始下载。请将此文件与计划打卡视频放在同一目录。");
 }

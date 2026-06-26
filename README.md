@@ -1,6 +1,6 @@
 # 个性化健康饮食规划系统
 
-这是一个可本地运行、支持账户数据持久化的健康饮食规划应用。项目由前端单页应用、FastAPI 后端、SQLite 数据库和可选云端模型复核组成，覆盖从用户画像采集、饮食计划生成、日期计划保存、采购清单、方案评估到推广文案/视频发布辅助的完整流程。
+这是一个可本地运行、支持账户数据持久化的健康饮食规划应用。项目由前端单页应用、FastAPI 后端、SQLite 数据库和可选云端大模型 Agent 编排组成，主流程覆盖从用户画像采集、饮食计划生成、方案评估到最终方案采购清单；计划分享与商家推广作为独立附加页进入，不计入问卷步骤。
 
 ## 当前能力
 
@@ -8,12 +8,13 @@
 - 用户画像：采集性别、年龄、身高、体重、健康目标、活动量、饮食风格、地域口味、过敏/禁忌和补充文本。
 - 计划周期：支持生成一天、一周或一个月的饮食计划；一个月按 30 天准备。
 - 日期保存：登录用户的每日计划按 `user_id + plan_date` 保存到 SQLite。再次查看同一日期时优先读取数据库；只有点击“重新生成当天”才覆盖该日期。
-- 三套方案：每个日期生成 3 套不同侧重点的膳食方案，并包含热量、宏量营养比例、三餐/加餐、Agent 共识分和食材明细。
+- 三套方案：每个日期由多 Agent 生成 3 套不同侧重点的膳食方案，并包含热量、宏量营养比例、三餐/加餐、Agent 共识分和食材明细。
 - 局部调整：支持固定菜品、删除菜品，并在重新生成当天时保留或替换对应菜品。
 - 采购清单：按肉蛋奶、蔬果、谷物、调味品分类生成采购明细，并支持勾选。
 - 方案评估：按成本、季节、地域权重实时评分并推荐最终方案。
-- 云端复核：可接入豆包、通义千问、DeepSeek；未配置 key 时自动使用 mock/fallback。
-- 推广输出：生成小红书文案、短视频脚本、公众号文章，并提供本地发布机器人说明。
+- 大模型 Agent：可接入豆包、通义千问、DeepSeek，覆盖用户画像、方案生成、方案复核、食材清单、用户分享和商家推广；未配置 key 时自动使用 mock/fallback。
+- 计划分享：生成小红书个人分享文案、短视频打卡脚本、计划长文记录，并提供本地半自动分享助手说明。
+- 商家推广：与用户分享分开展示，仅作为卖家/运营可选模块，推广内容需脱敏并获得授权。
 - 离线兜底：后端不可用时，前端会回退到浏览器本地计算和 `localStorage` 持久化。
 
 ## 技术栈
@@ -22,9 +23,9 @@
 - 后端：FastAPI、Pydantic、Uvicorn。
 - 数据库：SQLite。
 - 鉴权：自签名 HMAC Bearer token。
-- 模型复核：HTTP API 调用豆包、通义千问、DeepSeek，支持 mock/fallback。
+- 大模型编排：HTTP API 调用豆包、通义千问、DeepSeek，支持 mock/fallback。
 - 容器化：Dockerfile + Docker Compose。
-- 发布辅助：`publisher_bot.py` 使用 Playwright 辅助本地自动化发布。
+- 分享辅助：`publisher_bot.py` 使用 Playwright 辅助填充个人平台分享内容，最终发布需人工确认。
 
 ## 项目结构
 
@@ -33,14 +34,14 @@
 ├── index.html                  # 前端页面结构
 ├── app.js                      # 前端状态、生成流程、日期计划读写、评估和文案逻辑
 ├── style.css                   # 页面样式和响应式布局
-├── publisher_bot.py            # 本地发布辅助脚本
+├── publisher_bot.py            # 本地个人平台分享辅助脚本
 ├── docker-compose.yml          # 本地容器编排
 ├── backend/
 │   ├── main.py                 # FastAPI 入口、鉴权、接口路由、静态文件服务
 │   ├── storage.py              # SQLite 初始化和读写封装
 │   ├── schemas.py              # Pydantic 请求/响应模型
 │   ├── services.py             # 本地确定性饮食、食材、评分、文案生成服务
-│   ├── providers.py            # 云端模型复核客户端
+│   ├── providers.py            # 云端大模型 Agent 客户端与 mock/fallback 调度
 │   ├── switch.py               # API Switch 请求信封调度和事件记录
 │   ├── config.py               # .env 加载
 │   └── requirements.txt        # 后端依赖
@@ -57,7 +58,7 @@
    - 缺失日期才重新生成并尝试保存。
 4. 用户查看某天计划，切换日期时只读取或生成该日期。
 5. 用户固定/删除某个菜品后，点击“重新生成当天”只覆盖当前日期，不影响周期内其它日期。
-6. 当前日期的方案继续进入采购清单、方案评分、云端复核和营销文案流程。
+6. 当前日期的多套方案先进入方案评分和云端复核，确定最终推荐后生成采购清单；食材清单页右上角可进入独立的分享/推广附加页。配置大模型 API 后，第 1 步用户画像、第 2 步方案生成、第 3 步智能复核、第 4 步食材清单和附加页文案都会优先由大模型 Agent 生成。
 
 ## 数据持久化
 
@@ -118,6 +119,8 @@ cp .env.example .env
 DIET_PLANNER_DB=backend/diet_planner.db
 CORS_ALLOW_ORIGINS=*
 AUTH_SECRET=replace-with-a-long-random-secret
+LLM_PRIMARY_PROVIDER=deepseek
+LLM_TIMEOUT_SECONDS=60
 
 DOUBAO_API_KEY=
 DOUBAO_API_URL=https://ark.cn-beijing.volces.com/api/v3/responses
@@ -132,7 +135,7 @@ DEEPSEEK_API_URL=https://api.deepseek.com/chat/completions
 DEEPSEEK_MODEL=deepseek-chat
 ```
 
-未填写 key 时，后端会自动使用 mock/fallback 模式，应用仍可完整运行。
+`LLM_PRIMARY_PROVIDER` 可填 `deepseek`、`qianwen` 或 `doubao`。`LLM_TIMEOUT_SECONDS` 用于控制大模型 HTTP 请求超时；多方案生成一次要返回 3 套完整 JSON，建议不低于 45 秒。未填写 key 时，后端会自动使用 mock/fallback 模式，应用仍可完整运行。
 
 ## 主要后端接口
 

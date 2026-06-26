@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>个性化健康饮食规划系统</title>
-  <link rel="stylesheet" href="style.css">
+  <link rel="stylesheet" href="style.css?v=0.2.5">
 </head>
 <body>
 
@@ -347,36 +347,13 @@
           
           <div class="navigation-bar">
             <button class="nav-btn prev-step-btn" data-prev="1">◀ 上一步</button>
-            <button class="nav-btn next-step-btn" data-next="3">下一步：食材清单规划 ➔</button>
+            <button class="nav-btn next-step-btn" data-next="3">下一步：方案多维评估 ➔</button>
           </div>
         </div>
       </section>
       
-      <!-- 步骤 3：食材采购清单 -->
+      <!-- 步骤 3：方案评估 -->
       <section class="step-view" id="step-3">
-        <div class="glass-panel">
-          <div class="panel-header">
-            <h2 class="panel-title">分类食材采购清单</h2>
-            <span style="font-size: 0.8rem; color: var(--text-muted);">为每套方案生成肉蛋奶、蔬果、谷物、调味品等采购明细</span>
-          </div>
-          
-          <div style="margin-bottom: 1rem; font-size: 0.9rem; color: var(--text-secondary);" id="ingredientTipText">
-            以下是根据当前方案整理的采购食材明细，支持点击勾选已购买物品：
-          </div>
-          
-          <div class="ingredients-accordion" id="ingredientsAccordion">
-            <!-- 动态生成食材分类手风琴 -->
-          </div>
-          
-          <div class="navigation-bar">
-            <button class="nav-btn prev-step-btn" data-prev="2">◀ 上一步</button>
-            <button class="nav-btn next-step-btn" data-next="4">下一步：方案多维评估 ➔</button>
-          </div>
-        </div>
-      </section>
-      
-      <!-- 步骤 4：方案评估 -->
-      <section class="step-view" id="step-4">
         <div class="glass-panel">
           <div class="panel-header">
             <h2 class="panel-title">方案量化评估</h2>
@@ -439,83 +416,139 @@
               <!-- 动态渲染三家云端 AI 对抗评分 -->
             </div>
           </section>
+
+          <div class="evaluation-refresh-row">
+            <button class="nav-btn evaluation-refresh-btn" type="button" id="reevaluatePlansBtn">重新生成方案量化评估</button>
+          </div>
           
           <div class="navigation-bar">
-            <button class="nav-btn prev-step-btn" data-prev="3">◀ 上一步</button>
-            <button class="nav-btn next-step-btn" data-next="5" id="toMarketBtn">下一步：智能营销文案 ➔</button>
+            <button class="nav-btn prev-step-btn" data-prev="2">◀ 上一步</button>
+            <button class="nav-btn next-step-btn" data-next="4" id="toIngredientsBtn">下一步：食材清单规划 ➔</button>
           </div>
         </div>
       </section>
-      
-      <!-- 步骤 5：推广文案 -->
-      <section class="step-view" id="step-5">
+
+      <!-- 步骤 4：食材采购清单 -->
+      <section class="step-view" id="step-4">
         <div class="glass-panel">
-          <div class="panel-header">
-            <h2 class="panel-title">多平台推广文案</h2>
-            <span style="font-size: 0.8rem; color: var(--text-muted);">根据最终方案生成小红书、短视频脚本和微信公众号文案</span>
+          <div class="panel-header ingredient-header">
+            <div>
+              <h2 class="panel-title">分类食材采购清单</h2>
+              <span style="font-size: 0.8rem; color: var(--text-muted);">基于最终推荐方案生成肉蛋奶、蔬果、谷物、调味品等采购明细</span>
+            </div>
+            <button class="share-toggle-btn" type="button" id="sharePlanBtn">🔗 一键分享计划</button>
           </div>
           
-          <div class="marketing-tabs-container">
-            <!-- 平台切换Tab -->
-            <div class="marketing-tabs">
-              <button class="marketing-tab-btn active" data-platform="xhs">📕 小红书种草文案</button>
-              <button class="marketing-tab-btn" data-platform="video">🎬 抖音短视频脚本</button>
-              <button class="marketing-tab-btn" data-platform="gzh">📰 微信公众号文章</button>
-            </div>
-            
-            <!-- 小红书文案 -->
-            <div class="marketing-panel active" id="market-xhs">
-              <div class="copy-box" id="copyBoxXhs">加载中...</div>
-              <button class="copy-btn" data-target="copyBoxXhs">
-                <span class="btn-icon">📋</span> <span class="btn-lbl">复制小红书文案</span>
-              </button>
-            </div>
-            
-            <!-- 抖音脚本 -->
-            <div class="marketing-panel" id="market-video">
-              <div class="copy-box" id="copyBoxVideo">加载中...</div>
-              <button class="copy-btn" data-target="copyBoxVideo">
-                <span class="btn-icon">📋</span> <span class="btn-lbl">复制抖音脚本</span>
-              </button>
-            </div>
-            
-            <!-- 微信文章 -->
-            <div class="marketing-panel" id="market-gzh">
-              <div class="copy-box" id="copyBoxGzh">加载中...</div>
-              <button class="copy-btn" data-target="copyBoxGzh">
-                <span class="btn-icon">📋</span> <span class="btn-lbl">复制公众号文章</span>
-              </button>
-            </div>
+          <div style="margin-bottom: 1rem; font-size: 0.9rem; color: var(--text-secondary);" id="ingredientTipText">
+            以下是根据当前方案整理的采购食材明细，支持点击勾选已购买物品：
           </div>
-
-          <!-- 新增：自动发布模块 -->
-          <div class="publish-section glass-panel" style="margin-top: 1.5rem; border-color: var(--color-market); padding: 1.5rem;">
-            <h3 style="font-size: 1rem; font-weight: 600; margin-bottom: 0.75rem; color: var(--color-market); display: flex; align-items: center; gap: 0.5rem;">🚀 自动发布到社交平台 (真实发布助手)</h3>
-            <p style="font-size: 0.8rem; color: var(--text-secondary); margin-bottom: 1rem; line-height: 1.5;">
-              本项目已开发完毕本地发布机器人！您可以先点击生成推广视频（将网页卡片实时绘制录制），然后下载数据发布包并开启发布机器人。
-            </p>
-            
-            <div style="display: flex; gap: 1rem; flex-wrap: wrap; margin-bottom: 1rem; align-items: center;">
-              <!-- 视频生成进度 -->
-              <button class="nav-btn" type="button" style="background: linear-gradient(135deg, var(--color-diet), #047857);" id="generateVideoBtn">🎬 1. 生成并录制宣传视频</button>
-              <div id="videoProgressContainer" style="display: none; flex: 1; min-width: 200px; align-items: center; gap: 0.75rem; background: rgba(0,0,0,0.2); padding: 0.5rem; border-radius: 8px;">
-                <div class="progress-bar-container" style="margin-left: 0; flex: 1; height: 8px;">
-                  <div class="progress-bar-fill" id="videoProgressBar" style="width: 0%; background: var(--color-diet);"></div>
-                </div>
-                <span style="font-size: 0.8rem; font-weight: 600;" id="videoProgressText">0%</span>
-              </div>
-            </div>
-
-            <div style="display: flex; gap: 1rem; flex-wrap: wrap;">
-              <button class="nav-btn" type="button" style="background: rgba(255,255,255,0.05); border-color: rgba(255,255,255,0.1);" id="downloadPublishPackBtn" disabled>📦 2. 下载发布配置包 (JSON)</button>
-              <button class="nav-btn" type="button" style="background: linear-gradient(135deg, var(--color-market), #be185d);" id="openPublishDialogBtn" disabled>🚀 3. 一键托管发布机器人</button>
-            </div>
+          
+          <div class="ingredients-accordion" id="ingredientsAccordion">
+            <!-- 动态生成食材分类手风琴 -->
           </div>
           
           <div class="navigation-bar">
-            <button class="nav-btn prev-step-btn" data-prev="4">◀ 上一步</button>
+            <button class="nav-btn prev-step-btn" data-prev="3">◀ 上一步</button>
             <button class="nav-btn" style="background: linear-gradient(135deg, #10B981, #047857);" id="restartBtn">↩ 重新定制</button>
           </div>
+        </div>
+      </section>
+
+      <!-- 附加页面：计划分享与商家推广辅助（不计入问卷步骤） -->
+      <section class="step-view share-page" id="share-page">
+        <div class="glass-panel share-page-panel">
+          <button class="share-back-btn" type="button" id="backToIngredientsBtn">◀ 返回食材清单</button>
+
+          <div class="panel-header share-page-header">
+            <div>
+              <h2 class="panel-title">计划分享与推广辅助</h2>
+              <span style="font-size: 0.8rem; color: var(--text-muted);">附加页面：用户分享和商家推广分开处理，不改变问卷主流程</span>
+            </div>
+          </div>
+
+          <div class="share-role-grid">
+            <article class="share-role-card user-share">
+              <h3>用户分享</h3>
+              <p>面向客户或卖家个人记录，可复制计划、打卡脚本，或半自动填入个人平台；内容重点是自用、保存和复盘。</p>
+            </article>
+            <article class="share-role-card merchant-promo">
+              <h3>商家推广</h3>
+              <p>面向卖家/运营宣传，只根据最终方案、餐单和采购清单生成脱敏内容。公开推广应取得用户授权，避免展示个人健康数据。</p>
+            </article>
+          </div>
+          
+          <section class="share-content-section">
+            <div class="share-panel-header">
+              <div>
+                <h3>用户分享与个人记录</h3>
+                <span>把最终方案整理成个人分享文案、打卡脚本和本地半自动分享数据</span>
+              </div>
+            </div>
+            
+            <div class="marketing-tabs-container">
+              <div class="marketing-tabs">
+                <button class="marketing-tab-btn active" data-platform="xhs">📕 小红书个人分享</button>
+                <button class="marketing-tab-btn" data-platform="video">🎬 短视频打卡脚本</button>
+                <button class="marketing-tab-btn" data-platform="gzh">📝 计划长文记录</button>
+              </div>
+              
+              <div class="marketing-panel active" id="market-xhs">
+                <div class="copy-box" id="copyBoxXhs">加载中...</div>
+                <button class="copy-btn" data-target="copyBoxXhs">
+                  <span class="btn-icon">📋</span> <span class="btn-lbl">复制分享文案</span>
+                </button>
+              </div>
+              
+              <div class="marketing-panel" id="market-video">
+                <div class="copy-box" id="copyBoxVideo">加载中...</div>
+                <button class="copy-btn" data-target="copyBoxVideo">
+                  <span class="btn-icon">📋</span> <span class="btn-lbl">复制打卡脚本</span>
+                </button>
+              </div>
+              
+              <div class="marketing-panel" id="market-gzh">
+                <div class="copy-box" id="copyBoxGzh">加载中...</div>
+                <button class="copy-btn" data-target="copyBoxGzh">
+                  <span class="btn-icon">📋</span> <span class="btn-lbl">复制计划长文</span>
+                </button>
+              </div>
+            </div>
+
+            <div class="publish-section">
+              <h3>🔗 个人平台分享辅助</h3>
+              <p>
+                用于把饮食计划保存或分享到个人平台。可先生成计划打卡短视频，再下载分享数据包；小红书/抖音发布助手仅作为可选半自动辅助，最终发布仍需用户确认。
+              </p>
+              
+              <div class="share-actions-row">
+                <button class="nav-btn" type="button" id="generateVideoBtn">🎬 1. 生成计划打卡视频</button>
+                <div id="videoProgressContainer" class="share-video-progress">
+                  <div class="progress-bar-container">
+                    <div class="progress-bar-fill" id="videoProgressBar"></div>
+                  </div>
+                  <span id="videoProgressText">0%</span>
+                </div>
+              </div>
+
+              <div class="share-actions-row">
+                <button class="nav-btn" type="button" id="downloadPublishPackBtn" disabled>📦 2. 下载分享数据包 (JSON)</button>
+                <button class="nav-btn" type="button" id="openPublishDialogBtn" disabled>🚀 3. 打开个人平台发布助手</button>
+              </div>
+            </div>
+          </section>
+
+          <section class="promotion-section">
+            <div class="share-panel-header">
+              <div>
+                <h3>商家推广文案（可选）</h3>
+                <span>根据最终推荐方案生成脱敏推广内容，与用户个人分享分开展示</span>
+              </div>
+            </div>
+            <div class="copy-box promotion-copy" id="copyBoxPromo">加载中...</div>
+            <button class="copy-btn" data-target="copyBoxPromo">
+              <span class="btn-icon">📋</span> <span class="btn-lbl">复制推广文案</span>
+            </button>
+          </section>
         </div>
       </section>
       
@@ -540,16 +573,16 @@
   <!-- 离屏短视频 Canvas 绘制组件 -->
   <canvas id="videoCanvas" width="600" height="400" style="display: none;"></canvas>
 
-  <!-- 自动化发布机器人指引弹窗 -->
+  <!-- 个人平台发布助手指引弹窗 -->
   <dialog id="publishDialog" class="glass-panel" style="margin: auto; width: 90%; max-width: 550px; border-color: var(--color-market); color: var(--text-primary); outline: none;">
     <div class="panel-header" style="margin-bottom: 1rem; display: flex; justify-content: space-between; align-items: center;">
-      <h3 class="panel-title" style="color: var(--color-market); margin-bottom: 0;">🚀 自动化发布机器人运行指南</h3>
+      <h3 class="panel-title" style="color: var(--color-market); margin-bottom: 0;">🚀 个人平台发布助手运行指南</h3>
       <button type="button" onclick="document.getElementById('publishDialog').close()" style="background: transparent; border: none; color: var(--text-secondary); cursor: pointer; font-size: 1.25rem;">✕</button>
     </div>
     
     <div style="font-size: 0.85rem; line-height: 1.6; display: flex; flex-direction: column; gap: 1rem;">
       <p>
-        由于各大开放平台对个人自动发布有限制，我们为您编写了一个基于 <b>Playwright</b> 的本地自动化发布机器人。
+        由于各大开放平台对个人自动发布有限制，这里提供一个基于 <b>Playwright</b> 的本地半自动发布助手，用于把用户计划内容填入个人小红书/抖音页面。
       </p>
       
       <div style="background: rgba(0,0,0,0.4); padding: 0.75rem 1rem; border-radius: 8px; font-family: monospace; border: 1px solid rgba(255,255,255,0.05); white-space: pre-line;">
@@ -557,15 +590,15 @@
         pip install playwright
         playwright install
 
-        <span style="color: var(--color-diet);"># 2. 将刚下载的 publish_data.json 和 promo_video.webm 移入项目目录</span>
+        <span style="color: var(--color-diet);"># 2. 将刚下载的 share_data.json 和 plan_share_video.webm 移入项目目录</span>
 
-        <span style="color: var(--color-diet);"># 3. 运行自动化脚本（xhs 小红书，dy 抖音）</span>
+        <span style="color: var(--color-diet);"># 3. 运行半自动分享脚本（xhs 小红书，dy 抖音）</span>
         python publisher_bot.py -p xhs
         <span style="color: var(--text-muted); font-size: 0.72rem;">或抖音版：python publisher_bot.py -p dy</span>
       </div>
 
       <p style="color: var(--text-secondary);">
-        <b>工作原理</b>：脚本会以有头模式自动加载 Chromium 浏览器并跳转到发布页面，引导您进行<b>扫码登录</b>。一旦检测到登录，机器人将自动上传生成的短视频，并自动填写生成好的食谱软文和标签，您只需最终确认发布即可！
+        <b>工作原理</b>：脚本会以有头模式自动加载 Chromium 浏览器并跳转到发布页面，引导您进行<b>扫码登录</b>。一旦检测到登录，助手将自动上传生成的计划打卡视频，并填写生成好的分享文案和标签；最终发布动作仍需用户自行确认。
       </p>
 
       <div style="display:flex; justify-content: flex-end; gap: 1rem; margin-top: 0.5rem;">
@@ -574,6 +607,6 @@
     </div>
   </dialog>
 
-  <script src="app.js"></script>
+  <script src="app.js?v=0.3.3"></script>
 </body>
 </html>
