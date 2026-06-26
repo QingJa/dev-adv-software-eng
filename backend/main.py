@@ -35,7 +35,7 @@ from .storage import Storage
 from .switch import ApiSwitch
 
 
-APP_VERSION = "0.2.0"
+APP_VERSION = "0.3.0"
 ROOT = Path(__file__).resolve().parents[1]
 PASSWORD_SCHEME = "pbkdf2_sha256"
 PASSWORD_ITERATIONS = 260_000
@@ -55,15 +55,30 @@ async def provider_review(payload: dict[str, Any]) -> dict[str, Any]:
     return await providers.review_plans(provider_id, plans, context)
 
 
+async def generate_diet_plans(payload: dict[str, Any]) -> dict[str, Any]:
+    value = await providers.generate_diet_plans(payload, build_diet_plans)
+    return _save("diet.plans.backend", value)
+
+
+async def generate_ingredients(payload: dict[str, Any]) -> dict[str, Any]:
+    value = await providers.generate_ingredients(payload, build_ingredients)
+    return _save("ingredients.backend", value)
+
+
+async def generate_marketing(payload: dict[str, Any]) -> dict[str, Any]:
+    value = await providers.generate_marketing(payload, build_marketing)
+    return _save("marketing.backend", value)
+
+
 def publish_package(payload: dict[str, Any]) -> dict[str, Any]:
     storage.save_record("publish.package", payload)
     return {"saved": True, "package": payload}
 
 
-def create_or_update_user_profile(payload: dict[str, Any]) -> dict[str, Any]:
+async def create_or_update_user_profile(payload: dict[str, Any]) -> dict[str, Any]:
     auth_user_id = payload.get("_authUserId")
     profile_payload = {key: value for key, value in payload.items() if not key.startswith("_auth")}
-    value = create_profile(profile_payload)
+    value = await providers.generate_profile(profile_payload, create_profile)
     storage.save_record("profile.current", value)
     if auth_user_id:
         storage.update_user_profile(str(auth_user_id), profile_payload)
@@ -191,11 +206,11 @@ def _attach_auth_user(envelope: ApiEnvelope, authorization: str | None) -> None:
 
 switch.register("/api/v1/system/boot", lambda payload: {"ready": True, "received": payload})
 switch.register("/api/v1/profile/create", create_or_update_user_profile)
-switch.register("/api/v1/diet/plans", lambda payload: _save("diet.plans.backend", build_diet_plans(payload)))
-switch.register("/api/v1/ingredients/list", lambda payload: _save("ingredients.backend", build_ingredients(payload)))
+switch.register("/api/v1/diet/plans", generate_diet_plans)
+switch.register("/api/v1/ingredients/list", generate_ingredients)
 switch.register("/api/v1/evaluation/score", lambda payload: _save("evaluation.backend", score_plans(payload)))
 switch.register("/api/v1/cloud/providers/review", provider_review)
-switch.register("/api/v1/marketing/content", lambda payload: _save("marketing.backend", build_marketing(payload)))
+switch.register("/api/v1/marketing/content", generate_marketing)
 switch.register("/api/v1/publish/package", publish_package)
 
 

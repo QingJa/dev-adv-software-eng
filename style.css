@@ -67,7 +67,8 @@ body {
   grid-template-columns: 320px 1fr;
   grid-template-rows: 1fr 180px;
   height: 100dvh;
-  width: 100vw;
+  width: 100%;
+  max-width: 100%;
 }
 
 /* 侧边栏：品牌与主题控制 */
@@ -1182,7 +1183,7 @@ input:focus, select:focus, textarea:focus {
 .macro-item[data-macro="protein"] .macro-color { background: #EC4899; }
 .macro-item[data-macro="fat"] .macro-color { background: #F59E0B; }
 
-/* 步骤 3：食材清单 */
+/* 步骤 4：食材采购清单 */
 .ingredients-accordion {
   display: flex;
   flex-direction: column;
@@ -1275,7 +1276,32 @@ input:focus, select:focus, textarea:focus {
   text-decoration: line-through;
 }
 
-/* 步骤 4：方案评估 */
+.ingredient-header {
+  align-items: flex-start;
+  gap: 1rem;
+}
+
+.share-toggle-btn {
+  flex: 0 0 auto;
+  background: linear-gradient(135deg, var(--color-market), #be185d);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 10px;
+  color: #fff;
+  cursor: pointer;
+  font-family: var(--font-family);
+  font-size: 0.85rem;
+  font-weight: 700;
+  padding: 0.65rem 1rem;
+  transition: var(--transition-smooth);
+  white-space: nowrap;
+}
+
+.share-toggle-btn:hover {
+  filter: brightness(1.08);
+  transform: translateY(-1px);
+}
+
+/* 步骤 3：方案评估 */
 .evaluation-layout {
   display: grid;
   grid-template-columns: 1fr 1fr;
@@ -1396,6 +1422,24 @@ input:focus, select:focus, textarea:focus {
   padding: 1rem;
 }
 
+.evaluation-refresh-row {
+  display: flex;
+  justify-content: center;
+  margin: 1rem 0 0.35rem;
+}
+
+.evaluation-refresh-btn {
+  min-width: 220px;
+  border-color: rgba(139, 92, 246, 0.36);
+  background: rgba(139, 92, 246, 0.16);
+  color: var(--text-primary);
+}
+
+.evaluation-refresh-btn:hover:not(:disabled) {
+  border-color: var(--color-eval);
+  background: rgba(139, 92, 246, 0.24);
+}
+
 .ai-debate-header {
   display: flex;
   justify-content: space-between;
@@ -1500,7 +1544,110 @@ input:focus, select:focus, textarea:focus {
   padding-top: 0.6rem;
 }
 
-/* 步骤 5：营销推广 */
+/* 独立附加页：计划分享与商家推广 */
+.share-page-panel {
+  position: relative;
+  min-height: 680px;
+}
+
+.share-back-btn {
+  position: absolute;
+  top: 1.25rem;
+  left: 1.25rem;
+  z-index: 2;
+  background: rgba(31, 41, 55, 0.55);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 10px;
+  color: var(--text-primary);
+  cursor: pointer;
+  font-family: var(--font-family);
+  font-size: 0.82rem;
+  font-weight: 700;
+  padding: 0.55rem 0.9rem;
+  transition: var(--transition-smooth);
+}
+
+.share-back-btn:hover {
+  background: rgba(55, 65, 81, 0.72);
+  border-color: rgba(255, 255, 255, 0.18);
+}
+
+.share-page-header {
+  padding-left: 9.5rem;
+}
+
+.share-role-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 1rem;
+  margin-bottom: 1.2rem;
+}
+
+.share-role-card,
+.share-content-section,
+.promotion-section {
+  border: 1px solid var(--panel-border);
+  border-radius: 14px;
+  background: var(--panel-bg);
+  padding: 1rem;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.08);
+}
+
+.share-role-card h3 {
+  font-size: 1rem;
+  font-weight: 800;
+  margin-bottom: 0.45rem;
+}
+
+.share-role-card p {
+  color: var(--text-secondary);
+  font-size: 0.8rem;
+  line-height: 1.5;
+}
+
+.share-role-card.user-share {
+  border-color: rgba(16, 185, 129, 0.22);
+}
+
+.share-role-card.user-share h3 {
+  color: var(--color-diet);
+}
+
+.share-role-card.merchant-promo {
+  border-color: rgba(236, 72, 153, 0.24);
+}
+
+.share-role-card.merchant-promo h3 {
+  color: var(--color-market);
+}
+
+.share-content-section {
+  margin-bottom: 1rem;
+}
+
+.promotion-section {
+  border-color: rgba(236, 72, 153, 0.2);
+}
+
+.share-panel-header {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-bottom: 1rem;
+}
+
+.share-panel-header h3 {
+  color: var(--color-market);
+  font-size: 1rem;
+  font-weight: 700;
+  margin-bottom: 0.2rem;
+}
+
+.share-panel-header span {
+  color: var(--text-secondary);
+  font-size: 0.76rem;
+}
+
 .marketing-tabs-container {
   display: flex;
   flex-direction: column;
@@ -1562,6 +1709,11 @@ input:focus, select:focus, textarea:focus {
   user-select: text;
 }
 
+.copy-box.copy-selected {
+  border-color: rgba(245, 158, 11, 0.55);
+  box-shadow: 0 0 0 3px rgba(245, 158, 11, 0.12);
+}
+
 .copy-btn {
   background: rgba(255, 255, 255, 0.05);
   border: 1px solid rgba(255, 255, 255, 0.08);
@@ -1589,6 +1741,55 @@ input:focus, select:focus, textarea:focus {
   background: rgba(16, 185, 129, 0.15);
   border-color: var(--color-diet);
   color: #A7F3D0;
+}
+
+.copy-btn.manual-copy {
+  background: rgba(245, 158, 11, 0.16);
+  border-color: var(--color-ingredient);
+  color: #FDE68A;
+}
+
+.share-actions-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  margin-top: 0.75rem;
+}
+
+.share-actions-row .nav-btn:first-child {
+  background: linear-gradient(135deg, var(--color-diet), #047857);
+}
+
+.share-actions-row .nav-btn:last-child {
+  background: linear-gradient(135deg, var(--color-market), #be185d);
+}
+
+.share-video-progress {
+  display: none;
+  flex: 1;
+  min-width: 200px;
+  align-items: center;
+  gap: 0.75rem;
+  background: rgba(0, 0, 0, 0.2);
+  padding: 0.5rem;
+  border-radius: 8px;
+}
+
+.share-video-progress .progress-bar-container {
+  flex: 1;
+  height: 8px;
+  margin-left: 0;
+}
+
+.share-video-progress .progress-bar-fill {
+  width: 0%;
+  background: var(--color-diet);
+}
+
+.share-video-progress span {
+  font-size: 0.8rem;
+  font-weight: 600;
 }
 
 /* 底部实时处理进度 */
@@ -1805,8 +2006,29 @@ input:focus, select:focus, textarea:focus {
 :root[data-theme="light"] .auth-profile-status,
 :root[data-theme="light"] .plan-agent-panel,
 :root[data-theme="light"] .plan-calendar-panel,
-:root[data-theme="light"] .plan-agent-consensus {
+:root[data-theme="light"] .plan-agent-consensus,
+:root[data-theme="light"] .share-role-card,
+:root[data-theme="light"] .share-content-section,
+:root[data-theme="light"] .promotion-section,
+:root[data-theme="light"] .publish-section {
   background: rgba(242, 248, 240, 0.82);
+}
+
+:root[data-theme="light"] .share-content-section,
+:root[data-theme="light"] .promotion-section {
+  border-color: rgba(38, 74, 56, 0.14);
+  box-shadow: 0 16px 32px rgba(45, 64, 52, 0.08);
+}
+
+:root[data-theme="light"] .share-back-btn {
+  background: rgba(255, 255, 255, 0.72);
+  border-color: rgba(38, 74, 56, 0.16);
+  color: var(--text-primary);
+}
+
+:root[data-theme="light"] .share-back-btn:hover {
+  background: rgba(255, 255, 255, 0.9);
+  border-color: rgba(16, 185, 129, 0.26);
 }
 
 :root[data-theme="light"] .log-message {
@@ -1840,7 +2062,8 @@ input:focus, select:focus, textarea:focus {
 /* 移动端布局 */
 @media (max-width: 900px) {
   body {
-    overflow: auto;
+    overflow-x: hidden;
+    overflow-y: auto;
   }
 
   .app-container {
@@ -1848,7 +2071,8 @@ input:focus, select:focus, textarea:focus {
     grid-template-rows: auto 1fr 150px;
     height: auto;
     min-height: 100dvh;
-    overflow: auto;
+    overflow-x: hidden;
+    overflow-y: auto;
   }
   
   .sidebar {
@@ -1875,6 +2099,19 @@ input:focus, select:focus, textarea:focus {
     align-items: flex-start;
     flex-direction: column;
     gap: 0.75rem;
+  }
+
+  .share-toggle-btn {
+    width: 100%;
+  }
+
+  .share-page-header {
+    padding-left: 0;
+    padding-top: 3.2rem;
+  }
+
+  .share-role-grid {
+    grid-template-columns: 1fr;
   }
 
   .progress-bar-container {
@@ -1990,12 +2227,13 @@ input:focus, select:focus, textarea:focus {
   }
 
   .nav-btn,
-  .action-btn {
+  .action-btn,
+  .share-toggle-btn {
     width: 100%;
   }
 }
 
-/* 弹窗及发布面板升级样式 */
+/* 弹窗及分享面板升级样式 */
 dialog {
   border: 1px solid var(--panel-border);
   box-shadow: var(--panel-glow);
@@ -2007,11 +2245,27 @@ dialog::backdrop {
 }
 
 .publish-section {
-  border: 1px dashed rgba(236, 72, 153, 0.3) !important;
+  border: 1px dashed rgba(236, 72, 153, 0.3);
+  border-radius: 12px;
+  margin-top: 1rem;
+  padding: 1rem;
   transition: var(--transition-smooth);
 }
 
 .publish-section:hover {
-  border-color: var(--color-market) !important;
-  box-shadow: 0 4px 20px rgba(236, 72, 153, 0.08) !important;
+  border-color: var(--color-market);
+  box-shadow: 0 4px 20px rgba(236, 72, 153, 0.08);
+}
+
+.publish-section h3 {
+  color: var(--color-market);
+  font-size: 1rem;
+  font-weight: 700;
+  margin-bottom: 0.75rem;
+}
+
+.publish-section p {
+  color: var(--text-secondary);
+  font-size: 0.8rem;
+  line-height: 1.5;
 }

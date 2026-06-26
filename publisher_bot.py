@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-多智能体健康饮食规划系统 - 社交平台自动发布助手 (publisher_bot.py)
-使用 Playwright 自动化上传生成的宣传短视频及推广软文到小红书或抖音创作者平台。
+多智能体健康饮食规划系统 - 社交平台半自动分享助手 (publisher_bot.py)
+使用 Playwright 将生成的计划打卡视频及个人分享文案填入小红书或抖音创作者平台。
+脚本只负责自动填充，不会自动点击最终发布按钮。
 首次运行需扫码登录，登录状态会自动保存至本地 json 文件中，后续可免登录运行。
 """
 
@@ -24,9 +25,9 @@ except ImportError:
 CWD = Path(__file__).resolve().parent
 
 def load_publish_data(json_path):
-    """加载前端导出的发布包数据"""
+    """加载前端导出的分享数据包"""
     if not os.path.exists(json_path):
-        print(f"错误: 找不到发布数据文件 '{json_path}'。请先在网页端下载发布包并解压至此。")
+        print(f"错误: 找不到分享数据文件 '{json_path}'。请先在网页端下载分享数据包并放到项目目录。")
         sys.exit(1)
     try:
         with open(json_path, 'r', encoding='utf-8') as f:
@@ -36,7 +37,7 @@ def load_publish_data(json_path):
         sys.exit(1)
 
 def run_xiaohongshu(data, video_path):
-    """小红书自动发布流程"""
+    """小红书半自动分享流程"""
     state_file = CWD / "xhs_state.json"
     
     print("\n[+] 正在启动小红书自动发布助手...")
@@ -69,7 +70,7 @@ def run_xiaohongshu(data, video_path):
         
         # 等待页面加载完毕
         page.wait_for_selector(".upload-wrapper, input[type='file']", timeout=30000)
-        print("[+] 发布页面加载成功，准备上传视频...")
+        print("[+] 发布页面加载成功，准备上传计划打卡视频...")
 
         # 1. 上传视频
         file_input = page.locator("input[type='file']")
@@ -78,10 +79,10 @@ def run_xiaohongshu(data, video_path):
 
         # 等待视频上传并解析成功 (通常会出现标题输入框)
         page.wait_for_selector(".title-input input, input[placeholder*='填写标题']", timeout=60000)
-        print("[+] 视频上传完毕！开始填写文案数据...")
+        print("[+] 视频上传完毕！开始填写分享文案数据...")
 
         # 2. 填写标题
-        title = f"AI智能体定制：{data['plan_name']}"
+        title = f"我的健康饮食计划：{data['plan_name']}"
         title_box = page.locator(".title-input input, input[placeholder*='填写标题']").first
         title_box.fill(title[:20])  # 小红书标题限20字
         print(f"[+] 标题已填写: {title[:20]}")
@@ -106,7 +107,7 @@ def run_xiaohongshu(data, video_path):
             time.sleep(1)
 
 def run_douyin(data, video_path):
-    """抖音自动发布流程"""
+    """抖音半自动分享流程"""
     state_file = CWD / "dy_state.json"
     
     print("\n[+] 正在启动抖音自动发布助手...")
@@ -160,7 +161,7 @@ def run_douyin(data, video_path):
         
         # 写入抖音文案并加上话题
         desc_box.fill(data['video_desc'])
-        print("[+] 视频描述及推广话题已填入。")
+        print("[+] 视频描述及分享话题已填入。")
 
         # 3. 提示确认
         print("\n=======================================================")
@@ -176,13 +177,13 @@ def run_douyin(data, video_path):
             time.sleep(1)
 
 def main():
-    parser = argparse.ArgumentParser(description="多智能体健康饮食系统 - 自动发布助手")
+    parser = argparse.ArgumentParser(description="多智能体健康饮食系统 - 个人平台半自动分享助手")
     parser.add_argument("-p", "--platform", choices=["xhs", "dy"], required=True, 
-                        help="发布的目标平台: xhs (小红书), dy (抖音)")
-    parser.add_argument("-d", "--data", default="publish_data.json", 
-                        help="前端导出的 publish_data.json 路径")
-    parser.add_argument("-v", "--video", default="promo_video.webm", 
-                        help="前端生成的视频 promo_video.webm 路径")
+                        help="分享的目标平台: xhs (小红书), dy (抖音)")
+    parser.add_argument("-d", "--data", default="share_data.json",
+                        help="前端导出的 share_data.json 路径")
+    parser.add_argument("-v", "--video", default="plan_share_video.webm",
+                        help="前端生成的视频 plan_share_video.webm 路径")
     
     args = parser.parse_args()
 
@@ -196,11 +197,11 @@ def main():
         if os.path.exists(alternative_video):
             video_path = alternative_video
         else:
-            print(f"错误: 找不到视频文件 '{video_path}'。请在前端点击【生成并下载宣传视频】后重试。")
+            print(f"错误: 找不到视频文件 '{video_path}'。请在前端点击【生成计划打卡视频】后重试。")
             sys.exit(1)
 
     print(f"=======================================================")
-    print(f"🚀 启动自动发布流 | 目标平台: {'小红书' if args.platform == 'xhs' else '抖音'}")
+    print(f"🚀 启动半自动分享流 | 目标平台: {'小红书' if args.platform == 'xhs' else '抖音'}")
     print(f"📦 数据文件: {json_path}")
     print(f"🎬 视频文件: {video_path}")
     print(f"=======================================================")
