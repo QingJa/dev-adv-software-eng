@@ -1,0 +1,17 @@
+plugins {
+    id "com.android.application"
+}
+
+android {
+    namespace "com.yunnan.dietplanner"
+    compileSdk 35
+
+    defaultConfig {
+        applicationId "com.yunnan.dietplanner"
+        minSdk 24
+        targetSdk 35
+        versionCode 1
+        versionName "0.1.0"
+        buildConfigField "String", "APP_URL", "\"http://10.0.2.2:8000/\""
+    }
+}

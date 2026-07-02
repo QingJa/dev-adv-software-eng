@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="健康饮食规划系统图标">
+  <rect width="512" height="512" rx="112" fill="#0b1110"/>
+  <circle cx="176" cy="160" r="92" fill="#10b981"/>
+  <circle cx="342" cy="212" r="112" fill="#3b82f6" opacity="0.92"/>
+  <path fill="#f59e0b" d="M126 318c54-94 189-119 278-55-40 92-180 120-278 55Z"/>
+  <path fill="#fff" d="M154 305c78-48 165-52 230-16-74 13-150 23-230 16Z" opacity="0.88"/>
+  <path fill="#0b1110" d="M259 88c-19 37-22 76-8 117 8 23 24 52 48 87l-28 18c-27-39-45-72-55-100-17-50-13-97 10-140l33 18Z" opacity="0.78"/>
+  <circle cx="184" cy="154" r="23" fill="#ecfdf5"/>
+  <circle cx="337" cy="210" r="26" fill="#eff6ff"/>
+  <circle cx="262" cy="350" r="24" fill="#fff7ed"/>
+</svg>

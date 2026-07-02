@@ -62,6 +62,41 @@ class Storage:
             )
             conn.execute(
                 """
+                CREATE TABLE IF NOT EXISTS subscription_orders (
+                    id TEXT PRIMARY KEY,
+                    user_id TEXT NOT NULL,
+                    plan_id TEXT NOT NULL,
+                    plan_name TEXT NOT NULL,
+                    amount_cny REAL NOT NULL DEFAULT 0,
+                    status TEXT NOT NULL,
+                    channel TEXT NOT NULL DEFAULT 'demo-checkout',
+                    payment_method TEXT NOT NULL DEFAULT 'demo',
+                    payload TEXT NOT NULL DEFAULT '{}',
+                    created_at TEXT NOT NULL,
+                    paid_at TEXT,
+                    FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
+                )
+                """
+            )
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS user_subscriptions (
+                    user_id TEXT PRIMARY KEY,
+                    plan_id TEXT NOT NULL,
+                    plan_name TEXT NOT NULL,
+                    entitlement TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    started_at TEXT NOT NULL,
+                    expires_at TEXT,
+                    source_order_id TEXT,
+                    updated_at TEXT NOT NULL,
+                    FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE,
+                    FOREIGN KEY(source_order_id) REFERENCES subscription_orders(id) ON DELETE SET NULL
+                )
+                """
+            )
+            conn.execute(
+                """
                 CREATE TABLE IF NOT EXISTS diet_plans (
                     user_id TEXT NOT NULL,
                     plan_date TEXT NOT NULL,
@@ -71,6 +106,41 @@ class Storage:
                     plan_discussion TEXT NOT NULL DEFAULT '{}',
                     plan_constraints TEXT NOT NULL DEFAULT '{}',
                     metrics TEXT NOT NULL DEFAULT '{}',
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    PRIMARY KEY(user_id, plan_date),
+                    FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
+                )
+                """
+            )
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS diet_checkins (
+                    user_id TEXT NOT NULL,
+                    plan_date TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    selected_plan_index INTEGER NOT NULL DEFAULT 0,
+                    plan_name TEXT NOT NULL DEFAULT '',
+                    menu_snapshot TEXT NOT NULL DEFAULT '{}',
+                    note TEXT NOT NULL DEFAULT '',
+                    checked_at TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    PRIMARY KEY(user_id, plan_date),
+                    FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
+                )
+                """
+            )
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS history_menus (
+                    user_id TEXT NOT NULL,
+                    plan_date TEXT NOT NULL,
+                    period TEXT NOT NULL,
+                    selected_plan_index INTEGER NOT NULL DEFAULT 0,
+                    plan_name TEXT NOT NULL DEFAULT '',
+                    profile TEXT NOT NULL DEFAULT '{}',
+                    menu_snapshot TEXT NOT NULL DEFAULT '{}',
                     created_at TEXT NOT NULL,
                     updated_at TEXT NOT NULL,
                     PRIMARY KEY(user_id, plan_date),
@@ -93,6 +163,34 @@ class Storage:
             "lastLoginAt": row["last_login_at"],
         }
 
+    def _decode_subscription_order(self, row: sqlite3.Row) -> dict[str, Any]:
+        return {
+            "id": row["id"],
+            "userId": row["user_id"],
+            "planId": row["plan_id"],
+            "planName": row["plan_name"],
+            "amountCny": row["amount_cny"],
+            "status": row["status"],
+            "channel": row["channel"],
+            "paymentMethod": row["payment_method"],
+            "payload": self._decode_json(row["payload"], {}),
+            "createdAt": row["created_at"],
+            "paidAt": row["paid_at"],
+        }
+
+    def _decode_user_subscription(self, row: sqlite3.Row) -> dict[str, Any]:
+        return {
+            "userId": row["user_id"],
+            "planId": row["plan_id"],
+            "planName": row["plan_name"],
+            "entitlement": row["entitlement"],
+            "status": row["status"],
+            "startedAt": row["started_at"],
+            "expiresAt": row["expires_at"],
+            "sourceOrderId": row["source_order_id"],
+            "updatedAt": row["updated_at"],
+        }
+
     def _decode_json(self, raw_value: str | None, fallback: Any) -> Any:
         try:
             return json.loads(raw_value or "")
@@ -113,6 +211,33 @@ class Storage:
             "planDiscussion": self._decode_json(row["plan_discussion"], {}),
             "planConstraints": self._decode_json(row["plan_constraints"], {}),
             "metrics": self._decode_json(row["metrics"], {}),
+            "createdAt": row["created_at"],
+            "updatedAt": row["updated_at"],
+        }
+
+    def _decode_diet_checkin(self, row: sqlite3.Row) -> dict[str, Any]:
+        return {
+            "userId": row["user_id"],
+            "planDate": row["plan_date"],
+            "status": row["status"],
+            "selectedPlanIndex": row["selected_plan_index"],
+            "planName": row["plan_name"],
+            "menuSnapshot": self._decode_json(row["menu_snapshot"], {}),
+            "note": row["note"],
+            "checkedAt": row["checked_at"],
+            "createdAt": row["created_at"],
+            "updatedAt": row["updated_at"],
+        }
+
+    def _decode_history_menu(self, row: sqlite3.Row) -> dict[str, Any]:
+        return {
+            "userId": row["user_id"],
+            "planDate": row["plan_date"],
+            "period": row["period"],
+            "selectedPlanIndex": row["selected_plan_index"],
+            "planName": row["plan_name"],
+            "profile": self._decode_json(row["profile"], {}),
+            "menuSnapshot": self._decode_json(row["menu_snapshot"], {}),
             "createdAt": row["created_at"],
             "updatedAt": row["updated_at"],
         }
@@ -222,6 +347,150 @@ class Storage:
                 )
         return self.get_user_by_id(user_id)
 
+    def create_subscription_order(
+        self,
+        order_id: str,
+        user_id: str,
+        plan_id: str,
+        plan_name: str,
+        amount_cny: float,
+        status: str = "paid",
+        channel: str = "demo-checkout",
+        payment_method: str = "demo",
+        payload: dict[str, Any] | None = None,
+        paid_at: str | None = None,
+    ) -> dict[str, Any]:
+        now = utc_now()
+        encoded_payload = json.dumps(payload or {}, ensure_ascii=False)
+        with self._lock, self._connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO subscription_orders(
+                    id, user_id, plan_id, plan_name, amount_cny, status, channel,
+                    payment_method, payload, created_at, paid_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    order_id,
+                    user_id,
+                    plan_id,
+                    plan_name,
+                    amount_cny,
+                    status,
+                    channel,
+                    payment_method,
+                    encoded_payload,
+                    now,
+                    paid_at or now,
+                ),
+            )
+        order = self.get_subscription_order(user_id, order_id)
+        if order is None:
+            raise RuntimeError("created subscription order could not be loaded")
+        return order
+
+    def get_subscription_order(self, user_id: str, order_id: str) -> dict[str, Any] | None:
+        with self._connect() as conn:
+            row = conn.execute(
+                """
+                SELECT id, user_id, plan_id, plan_name, amount_cny, status, channel,
+                       payment_method, payload, created_at, paid_at
+                FROM subscription_orders
+                WHERE user_id = ? AND id = ?
+                """,
+                (user_id, order_id),
+            ).fetchone()
+        return self._decode_subscription_order(row) if row else None
+
+    def list_subscription_orders(self, user_id: str, limit: int = 10) -> list[dict[str, Any]]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT id, user_id, plan_id, plan_name, amount_cny, status, channel,
+                       payment_method, payload, created_at, paid_at
+                FROM subscription_orders
+                WHERE user_id = ?
+                ORDER BY created_at DESC
+                LIMIT ?
+                """,
+                (user_id, limit),
+            ).fetchall()
+        return [self._decode_subscription_order(row) for row in rows]
+
+    def upsert_user_subscription(
+        self,
+        user_id: str,
+        plan_id: str,
+        plan_name: str,
+        entitlement: str,
+        status: str,
+        started_at: str,
+        expires_at: str | None,
+        source_order_id: str | None = None,
+    ) -> dict[str, Any]:
+        now = utc_now()
+        with self._lock, self._connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO user_subscriptions(
+                    user_id, plan_id, plan_name, entitlement, status, started_at,
+                    expires_at, source_order_id, updated_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(user_id) DO UPDATE SET
+                    plan_id = excluded.plan_id,
+                    plan_name = excluded.plan_name,
+                    entitlement = excluded.entitlement,
+                    status = excluded.status,
+                    started_at = excluded.started_at,
+                    expires_at = excluded.expires_at,
+                    source_order_id = excluded.source_order_id,
+                    updated_at = excluded.updated_at
+                """,
+                (
+                    user_id,
+                    plan_id,
+                    plan_name,
+                    entitlement,
+                    status,
+                    started_at,
+                    expires_at,
+                    source_order_id,
+                    now,
+                ),
+            )
+        subscription = self.get_user_subscription(user_id)
+        if subscription is None:
+            raise RuntimeError("saved user subscription could not be loaded")
+        return subscription
+
+    def get_user_subscription(self, user_id: str) -> dict[str, Any] | None:
+        with self._connect() as conn:
+            row = conn.execute(
+                """
+                SELECT user_id, plan_id, plan_name, entitlement, status, started_at,
+                       expires_at, source_order_id, updated_at
+                FROM user_subscriptions
+                WHERE user_id = ?
+                """,
+                (user_id,),
+            ).fetchone()
+        return self._decode_user_subscription(row) if row else None
+
+    def update_user_subscription_status(self, user_id: str, status: str) -> dict[str, Any] | None:
+        now = utc_now()
+        with self._lock, self._connect() as conn:
+            conn.execute(
+                """
+                UPDATE user_subscriptions
+                SET status = ?, updated_at = ?
+                WHERE user_id = ?
+                """,
+                (status, now, user_id),
+            )
+        return self.get_user_subscription(user_id)
+
     def save_diet_plan(
         self,
         user_id: str,
@@ -302,6 +571,156 @@ class Storage:
                 (user_id, start_date, end_date),
             ).fetchall()
         return [self._decode_diet_plan(row) for row in rows]
+
+    def save_diet_checkin(
+        self,
+        user_id: str,
+        plan_date: str,
+        status: str,
+        selected_plan_index: int,
+        plan_name: str,
+        menu_snapshot: dict[str, Any],
+        note: str = "",
+        checked_at: str | None = None,
+    ) -> dict[str, Any]:
+        now = utc_now()
+        encoded_menu = json.dumps(menu_snapshot or {}, ensure_ascii=False)
+        with self._lock, self._connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO diet_checkins(
+                    user_id, plan_date, status, selected_plan_index, plan_name,
+                    menu_snapshot, note, checked_at, created_at, updated_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(user_id, plan_date) DO UPDATE SET
+                    status = excluded.status,
+                    selected_plan_index = excluded.selected_plan_index,
+                    plan_name = excluded.plan_name,
+                    menu_snapshot = excluded.menu_snapshot,
+                    note = excluded.note,
+                    checked_at = excluded.checked_at,
+                    updated_at = excluded.updated_at
+                """,
+                (
+                    user_id,
+                    plan_date,
+                    status,
+                    selected_plan_index,
+                    plan_name,
+                    encoded_menu,
+                    note,
+                    checked_at or now,
+                    now,
+                    now,
+                ),
+            )
+
+        saved = self.get_diet_checkin(user_id, plan_date)
+        if saved is None:
+            raise RuntimeError("saved diet checkin could not be loaded")
+        return saved
+
+    def get_diet_checkin(self, user_id: str, plan_date: str) -> dict[str, Any] | None:
+        with self._connect() as conn:
+            row = conn.execute(
+                """
+                SELECT user_id, plan_date, status, selected_plan_index, plan_name,
+                       menu_snapshot, note, checked_at, created_at, updated_at
+                FROM diet_checkins
+                WHERE user_id = ? AND plan_date = ?
+                """,
+                (user_id, plan_date),
+            ).fetchone()
+        return self._decode_diet_checkin(row) if row else None
+
+    def list_diet_checkins(self, user_id: str, start_date: str, end_date: str) -> list[dict[str, Any]]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT user_id, plan_date, status, selected_plan_index, plan_name,
+                       menu_snapshot, note, checked_at, created_at, updated_at
+                FROM diet_checkins
+                WHERE user_id = ? AND plan_date >= ? AND plan_date <= ?
+                ORDER BY plan_date ASC
+                """,
+                (user_id, start_date, end_date),
+            ).fetchall()
+        return [self._decode_diet_checkin(row) for row in rows]
+
+    def save_history_menu(
+        self,
+        user_id: str,
+        plan_date: str,
+        period: str,
+        selected_plan_index: int,
+        plan_name: str,
+        profile: dict[str, Any],
+        menu_snapshot: dict[str, Any],
+    ) -> dict[str, Any]:
+        now = utc_now()
+        encoded_profile = json.dumps(profile or {}, ensure_ascii=False)
+        encoded_menu = json.dumps(menu_snapshot or {}, ensure_ascii=False)
+        with self._lock, self._connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO history_menus(
+                    user_id, plan_date, period, selected_plan_index, plan_name,
+                    profile, menu_snapshot, created_at, updated_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(user_id, plan_date) DO UPDATE SET
+                    period = excluded.period,
+                    selected_plan_index = excluded.selected_plan_index,
+                    plan_name = excluded.plan_name,
+                    profile = excluded.profile,
+                    menu_snapshot = excluded.menu_snapshot,
+                    updated_at = excluded.updated_at
+                """,
+                (
+                    user_id,
+                    plan_date,
+                    period,
+                    selected_plan_index,
+                    plan_name,
+                    encoded_profile,
+                    encoded_menu,
+                    now,
+                    now,
+                ),
+            )
+
+        saved = self.get_history_menu(user_id, plan_date)
+        if saved is None:
+            raise RuntimeError("saved history menu could not be loaded")
+        return saved
+
+    def get_history_menu(self, user_id: str, plan_date: str) -> dict[str, Any] | None:
+        with self._connect() as conn:
+            row = conn.execute(
+                """
+                SELECT user_id, plan_date, period, selected_plan_index, plan_name,
+                       profile, menu_snapshot, created_at, updated_at
+                FROM history_menus
+                WHERE user_id = ? AND plan_date = ?
+                """,
+                (user_id, plan_date),
+            ).fetchone()
+        return self._decode_history_menu(row) if row else None
+
+    def list_history_menus(self, user_id: str, start_date: str, end_date: str) -> list[dict[str, Any]]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT user_id, plan_date, period, selected_plan_index, plan_name,
+                       profile, menu_snapshot, created_at, updated_at
+                FROM history_menus
+                WHERE user_id = ? AND plan_date >= ? AND plan_date <= ?
+                ORDER BY plan_date ASC
+                """,
+                (user_id, start_date, end_date),
+            ).fetchall()
+        return [self._decode_history_menu(row) for row in rows]
 
     def record_count(self) -> int:
         with self._connect() as conn:

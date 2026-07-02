@@ -42,16 +42,27 @@ Provider request formats:
 - `POST /api/v1/auth/login`
 - `GET /api/v1/auth/me`
 - `PUT /api/v1/auth/me/profile`
+- `GET /api/v1/business/plans`
+- `GET /api/v1/business/subscription/me`
+- `POST /api/v1/business/orders/checkout`
 - `GET /api/v1/diet/plans/saved?startDate=YYYY-MM-DD&endDate=YYYY-MM-DD`
 - `GET /api/v1/diet/plans/saved/{plan_date}`
 - `POST /api/v1/diet/plans/saved`
+- `GET /api/v1/diet/checkins?startDate=YYYY-MM-DD&endDate=YYYY-MM-DD`
+- `POST /api/v1/diet/checkins`
+- `GET /api/v1/diet/history-menus?startDate=YYYY-MM-DD&endDate=YYYY-MM-DD`
+- `POST /api/v1/diet/history-menus`
 - `POST /api/v1/switch/dispatch`
 - `GET /api/v1/switch/stats`
 - `GET /api/v1/events`
 - `GET /api/v1/events/stream`
 
-The frontend sends all business calls through `/api/v1/switch/dispatch` with the shared API envelope.
+The frontend uses direct authenticated endpoints for accounts, saved diet plans, checkins, history menus, and membership entitlements. Agent-style generation and telemetry calls still use `/api/v1/switch/dispatch` with the shared API envelope.
 
-User accounts are stored in the SQLite `users` table. Passwords are salted PBKDF2-SHA256 hashes. On login, the frontend loads the existing user profile from the database; the profile is updated only when the questionnaire is submitted again.
+User accounts are stored in the SQLite `users` table. Passwords are salted PBKDF2-SHA256 hashes. On login, the frontend loads the existing user profile from the database; if no profile exists, it routes the customer to the health questionnaire before planning. The profile is updated only when the questionnaire is submitted again.
 
 Saved diet plans are stored in the SQLite `diet_plans` table by `user_id + plan_date`. The frontend can prepare a one-day, one-week, or 30-day plan range, reads existing dates first, generates only missing dates, and overwrites a date only when the user regenerates that day.
+
+Customer execution records are stored in `diet_checkins` and `history_menus`. Future dates are rejected for checkins and history-menu writes, so planning data is not mixed with execution data.
+
+Membership demo commerce is stored in `subscription_orders` and `user_subscriptions`. The current backend exposes free, Pro monthly, and Pro yearly plans; checkout is a demo-paid flow and does not call a real payment gateway.

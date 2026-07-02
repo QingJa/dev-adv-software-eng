@@ -106,6 +106,20 @@ class UserProfileUpdate(BaseModel):
         return display_name
 
 
+class SubscriptionCheckoutRequest(BaseModel):
+    planId: str = Field(min_length=1, max_length=40)
+    channel: str = Field(default="demo-checkout", max_length=60)
+    paymentMethod: str = Field(default="demo", max_length=60)
+    couponCode: str | None = Field(default=None, max_length=40)
+
+    @field_validator("planId", "channel", "paymentMethod", "couponCode")
+    @classmethod
+    def strip_subscription_text(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        return value.strip()
+
+
 class DietPlanSaveRequest(BaseModel):
     planDate: str = Field(pattern=r"^\d{4}-\d{2}-\d{2}$")
     period: Literal["day", "week", "month"] = "day"
@@ -123,3 +137,50 @@ class DietPlanSaveRequest(BaseModel):
         except ValueError:
             raise ValueError("计划日期必须是 YYYY-MM-DD") from None
         return value
+
+
+class DietCheckinSaveRequest(BaseModel):
+    planDate: str = Field(pattern=r"^\d{4}-\d{2}-\d{2}$")
+    status: Literal["planned", "completed", "skipped"] = "completed"
+    selectedPlanIndex: int = Field(default=0, ge=0, le=10)
+    planName: str = Field(default="", max_length=120)
+    menuSnapshot: dict[str, Any] = Field(default_factory=dict)
+    note: str = Field(default="", max_length=1000)
+    checkedAt: str | None = None
+
+    @field_validator("planDate")
+    @classmethod
+    def validate_plan_date(cls, value: str) -> str:
+        try:
+            datetime.strptime(value, "%Y-%m-%d")
+        except ValueError:
+            raise ValueError("打卡日期必须是 YYYY-MM-DD") from None
+        return value
+
+    @field_validator("planName", "note")
+    @classmethod
+    def strip_text(cls, value: str) -> str:
+        return value.strip()
+
+
+class HistoryMenuSaveRequest(BaseModel):
+    planDate: str = Field(pattern=r"^\d{4}-\d{2}-\d{2}$")
+    period: Literal["day", "week", "month"] = "day"
+    selectedPlanIndex: int = Field(default=0, ge=0, le=10)
+    planName: str = Field(default="", max_length=120)
+    profile: dict[str, Any] = Field(default_factory=dict)
+    menuSnapshot: dict[str, Any] = Field(default_factory=dict)
+
+    @field_validator("planDate")
+    @classmethod
+    def validate_plan_date(cls, value: str) -> str:
+        try:
+            datetime.strptime(value, "%Y-%m-%d")
+        except ValueError:
+            raise ValueError("菜单日期必须是 YYYY-MM-DD") from None
+        return value
+
+    @field_validator("planName")
+    @classmethod
+    def strip_plan_name(cls, value: str) -> str:
+        return value.strip()

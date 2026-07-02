@@ -5,7 +5,7 @@
 
 // 全局状态管理
 const state = {
-  currentStep: 1,
+  currentStep: 5,
   formData: {},
   plans: [],
   activePlanIndex: 0,
@@ -59,10 +59,16 @@ const state = {
     period: "day",
     startDate: "",
     selectedDate: "",
+    visibleDate: "",
     savedDates: {},
+    generationStatus: {},
+    backgroundQueueRunning: false,
+    backgroundQueue: [],
     loading: false,
     lastSource: "new"
   },
+  checkins: {},
+  historyMenus: {},
   backend: {
     enabled: true,
     online: false,
@@ -75,6 +81,22 @@ const state = {
     user: null,
     mode: "login",
     loading: false
+  },
+  commerce: {
+    plans: [],
+    entitlement: "free",
+    limits: {
+      planPeriods: ["day"],
+      maxRangeDays: 1,
+      rangeShopping: false,
+      historyReview: false,
+      shareExport: false,
+      edgeOffline: false
+    },
+    subscription: null,
+    orders: [],
+    loading: false,
+    lastError: ""
   },
   apiEvents: []
 };
@@ -109,6 +131,42 @@ const PLAN_ANGLE_SCORE_PROFILES = [
   { cost: 94, season: 82, region: 78 },
   { cost: 76, season: 96, region: 88 }
 ];
+const COMMERCE_PLAN_FALLBACKS = [
+  {
+    id: "free",
+    name: "免费体验版",
+    amountCny: 0,
+    billingCycle: "none",
+    description: "体验问卷和单日饮食计划。",
+    features: ["单日基础方案", "本地计划记录", "基础采购清单"]
+  },
+  {
+    id: "pro_month",
+    name: "Pro 月会员",
+    amountCny: 19.9,
+    billingCycle: "month",
+    description: "解锁周期计划、采购合并和报告导出。",
+    features: ["一周/一个月计划", "周期合并采购清单", "打卡历史复盘", "分享报告导出"]
+  }
+];
+const COMMERCE_LIMIT_FALLBACKS = {
+  free: {
+    planPeriods: ["day"],
+    maxRangeDays: 1,
+    rangeShopping: false,
+    historyReview: false,
+    shareExport: false,
+    edgeOffline: false
+  },
+  pro: {
+    planPeriods: ["day", "week", "month"],
+    maxRangeDays: 30,
+    rangeShopping: true,
+    historyReview: true,
+    shareExport: true,
+    edgeOffline: true
+  }
+};
 
 const memoryCache = new Map();
 let persistentRecords = {};
@@ -255,9 +313,11 @@ document.addEventListener("DOMContentLoaded", () => {
   initWeightSliders();
   initPlanCalendarControls();
   initAuthState();
+  renderBodyTrendPanel();
+  goToCustomerHome({ silent: true });
   addSystemLog("system", "系统初始化完成，已准备生成个性化饮食方案。");
   addSystemLog("switch", "正在检查后端服务连接；若服务不可用，将自动使用本地计算流程。");
-  addSystemLog("client", "请填写基础健康问卷，系统将生成结构化用户画像。");
+  addSystemLog("client", "已进入客户主页；尚无计划时可先定制饮食计划。");
 });
 
 function initTheme() {
@@ -541,6 +601,7 @@ function initAuthState() {
   state.auth.loading = false;
   state.auth.mode = "login";
   renderAuthPanel();
+  refreshCommerceState({ silent: true });
 
   if (state.auth.token) {
     refreshCurrentUser({ announce: true });
@@ -592,6 +653,223 @@ async function requestAuth(path, options = {}) {
   state.backend.lastError = "";
   renderApiSwitchMetrics();
   return data;
+}
+
+function getCommercePlans() {
+  return state.commerce.plans.length ? state.commerce.plans : COMMERCE_PLAN_FALLBACKS;
+}
+
+function getCommerceLimits() {
+  return state.commerce.limits || COMMERCE_LIMIT_FALLBACKS[state.commerce.entitlement] || COMMERCE_LIMIT_FALLBACKS.free;
+}
+
+function isProEntitled() {
+  return state.commerce.entitlement === "pro";
+}
+
+function hasCommerceFeature(featureName) {
+  return Boolean(getCommerceLimits()[featureName]);
+}
+
+function setCommerceMessage(message, type = "info") {
+  const el = document.getElementById("membershipMessage");
+  if (!el) return;
+  el.textContent = message || "";
+  el.dataset.type = type;
+}
+
+function promptUpgradeForFeature(featureLabel) {
+  const message = `${featureLabel} 属于 Pro 权益，请先开通会员。`;
+  setCommerceMessage(message, "error");
+  addSystemLog("market", message);
+  return false;
+}
+
+function canUsePlanPeriod(period) {
+  const normalized = normalizePlanPeriod(period);
+  return (getCommerceLimits().planPeriods || ["day"]).includes(normalized);
+}
+
+function getAllowedPlanPeriod(period, options = {}) {
+  const normalized = normalizePlanPeriod(period);
+  if (canUsePlanPeriod(normalized)) return normalized;
+  if (options.announce) {
+    promptUpgradeForFeature(`${getPlanPeriodLabel(normalized)}周期计划`);
+  }
+  return "day";
+}
+
+function ensureEntitledPlanPeriod(options = {}) {
+  const allowed = getAllowedPlanPeriod(state.dietCalendar.period, options);
+  if (allowed !== state.dietCalendar.period) {
+    state.dietCalendar.period = allowed;
+    setVisiblePlanDate(state.dietCalendar.startDate || getTodayIsoDate());
+  }
+}
+
+function applyCommercePayload(data = {}) {
+  const entitlement = data.entitlement || "free";
+  state.commerce.plans = Array.isArray(data.plans) && data.plans.length
+    ? data.plans
+    : getCommercePlans();
+  state.commerce.entitlement = entitlement;
+  state.commerce.limits = data.limits || COMMERCE_LIMIT_FALLBACKS[entitlement] || COMMERCE_LIMIT_FALLBACKS.free;
+  state.commerce.subscription = data.subscription || null;
+  state.commerce.orders = Array.isArray(data.orders) ? data.orders : [];
+  state.commerce.lastError = "";
+  ensureEntitledPlanPeriod();
+  renderCommercePanel();
+  renderPlanCalendarControls();
+  renderRangeShoppingPanel();
+  if (typeof saveDataRecord === "function") {
+    saveDataRecord("commerce.subscription.current", {
+      entitlement: state.commerce.entitlement,
+      subscription: state.commerce.subscription,
+      orders: state.commerce.orders
+    });
+  }
+}
+
+function resetCommerceState() {
+  state.commerce.entitlement = "free";
+  state.commerce.limits = COMMERCE_LIMIT_FALLBACKS.free;
+  state.commerce.subscription = null;
+  state.commerce.orders = [];
+  state.commerce.loading = false;
+  state.commerce.lastError = "";
+  ensureEntitledPlanPeriod();
+  renderCommercePanel();
+  renderPlanCalendarControls();
+  renderRangeShoppingPanel();
+}
+
+async function refreshCommerceState(options = {}) {
+  state.commerce.loading = true;
+  renderCommercePanel();
+  try {
+    const data = state.auth.token
+      ? await requestAuth("/api/v1/business/subscription/me", { method: "GET" })
+      : await requestAuth("/api/v1/business/plans", { method: "GET" });
+    applyCommercePayload(state.auth.token ? data : {
+      ...data,
+      entitlement: "free",
+      limits: COMMERCE_LIMIT_FALLBACKS.free,
+      subscription: null,
+      orders: []
+    });
+    if (options.announce && state.auth.token) {
+      addSystemLog("market", `会员权益已同步：${isProEntitled() ? "Pro" : "免费版"}。`);
+    }
+  } catch (err) {
+    state.commerce.lastError = err.message || "会员服务不可用";
+    if (!state.commerce.plans.length) state.commerce.plans = COMMERCE_PLAN_FALLBACKS;
+    if (!state.auth.token) resetCommerceState();
+    renderCommercePanel();
+  } finally {
+    state.commerce.loading = false;
+    renderCommercePanel();
+  }
+}
+
+function formatCommercePrice(plan) {
+  const amount = Number(plan.amountCny || 0);
+  if (!amount) return "免费";
+  const cycle = plan.billingCycle === "year" ? "年" : "月";
+  return `¥${amount.toFixed(amount % 1 ? 1 : 0)}/${cycle}`;
+}
+
+function renderCommercePanel() {
+  const status = document.getElementById("membershipStatus");
+  const benefits = document.getElementById("membershipBenefits");
+  const list = document.getElementById("membershipPlanList");
+  const message = document.getElementById("membershipMessage");
+  if (!status && !benefits && !list) return;
+
+  const subscription = state.commerce.subscription;
+  if (status) {
+    status.textContent = state.commerce.loading
+      ? "会员状态同步中..."
+      : (isProEntitled()
+        ? `Pro 已开通 · ${formatDateTime(subscription?.expiresAt)} 到期`
+        : "免费版 · 单日计划");
+  }
+
+  if (benefits) {
+    benefits.innerHTML = "";
+    const activePlan = getCommercePlans().find(plan => plan.id === subscription?.planId)
+      || getCommercePlans().find(plan => plan.id === (isProEntitled() ? "pro_month" : "free"))
+      || COMMERCE_PLAN_FALLBACKS[0];
+    (activePlan.features || []).slice(0, 4).forEach(feature => {
+      const item = document.createElement("span");
+      item.textContent = feature;
+      benefits.appendChild(item);
+    });
+  }
+
+  if (list) {
+    list.innerHTML = "";
+    getCommercePlans()
+      .filter(plan => plan.id !== "free")
+      .forEach(plan => {
+        const item = document.createElement("article");
+        item.className = "commerce-plan-item";
+
+        const info = document.createElement("div");
+        const name = document.createElement("strong");
+        name.textContent = `${plan.name} · ${formatCommercePrice(plan)}`;
+        const desc = document.createElement("small");
+        desc.textContent = plan.description || (plan.features || []).join("、");
+        info.appendChild(name);
+        info.appendChild(desc);
+
+        const btn = document.createElement("button");
+        btn.type = "button";
+        btn.dataset.membershipPlan = plan.id;
+        btn.textContent = subscription?.planId === plan.id ? "已开通" : "开通";
+        btn.disabled = state.commerce.loading || subscription?.planId === plan.id;
+
+        item.appendChild(info);
+        item.appendChild(btn);
+        list.appendChild(item);
+      });
+  }
+
+  if (message && state.commerce.lastError) {
+    message.textContent = state.commerce.lastError;
+    message.dataset.type = "error";
+  }
+}
+
+async function checkoutMembershipPlan(planId, options = {}) {
+  if (!state.auth.token) {
+    setCommerceMessage("请先登录账户，再开通会员套餐。", "error");
+    setAuthMessage("请先登录后再开通会员", "error");
+    return null;
+  }
+
+  state.commerce.loading = true;
+  renderCommercePanel();
+  try {
+    const data = await requestAuth("/api/v1/business/orders/checkout", {
+      method: "POST",
+      body: JSON.stringify({
+        planId,
+        channel: options.channel || "sidebar-membership",
+        paymentMethod: "demo"
+      })
+    });
+    applyCommercePayload(data);
+    setCommerceMessage(`已开通 ${data.subscription?.planName || "Pro 会员"}，订单 ${data.order?.id || "已记录"}。`, "success");
+    addSystemLog("market", `会员订单已支付：${data.subscription?.planName || planId}，Pro 权益已生效。`);
+    return data;
+  } catch (err) {
+    setCommerceMessage(err.message || "会员开通失败", "error");
+    state.commerce.lastError = err.message || "会员开通失败";
+    return null;
+  } finally {
+    state.commerce.loading = false;
+    renderCommercePanel();
+  }
 }
 
 function setAuthMode(mode) {
@@ -648,6 +926,22 @@ function renderAuthPanel() {
 
 function hasStoredProfile(profile) {
   return Boolean(profile && typeof profile === "object" && Object.keys(profile).length > 0);
+}
+
+function handleAuthenticatedProfile(profile, options = {}) {
+  if (applyStoredProfileToForm(profile)) {
+    if (options.announce) {
+      addSystemLog("data", options.loadedMessage || "已从数据库读取客户画像，并填回问卷。");
+    }
+    return true;
+  }
+
+  setAuthMessage("当前账户暂无客户画像，请先完成基础健康问卷。", "info");
+  goToStep(1);
+  if (options.announce !== false) {
+    addSystemLog("client", "当前账户暂无客户画像，已跳转到基础健康问卷收集客户画像。");
+  }
+  return false;
 }
 
 function formatDateTime(value) {
@@ -726,6 +1020,57 @@ function getPlanDateRange() {
   const startDate = normalizeIsoDate(state.dietCalendar.startDate || getTodayIsoDate());
   const length = getPlanPeriodLength();
   return Array.from({ length }, (_, index) => addDays(startDate, index));
+}
+
+function getVisiblePlanDate() {
+  return normalizeIsoDate(
+    state.dietCalendar.visibleDate
+    || state.dietCalendar.selectedDate
+    || state.dietCalendar.startDate
+    || getTodayIsoDate()
+  );
+}
+
+function setVisiblePlanDate(planDate) {
+  const normalizedDate = normalizeIsoDate(planDate);
+  state.dietCalendar.selectedDate = normalizedDate;
+  state.dietCalendar.visibleDate = normalizedDate;
+  return normalizedDate;
+}
+
+function getPlanGenerationEntry(planDate) {
+  const normalizedDate = normalizeIsoDate(planDate);
+  return state.dietCalendar.generationStatus?.[normalizedDate] || { status: "idle", message: "" };
+}
+
+function getPlanGenerationStatus(planDate) {
+  return getPlanGenerationEntry(planDate).status || "idle";
+}
+
+function setPlanGenerationStatus(planDate, status, message = "") {
+  const normalizedDate = normalizeIsoDate(planDate);
+  if (!state.dietCalendar.generationStatus || typeof state.dietCalendar.generationStatus !== "object") {
+    state.dietCalendar.generationStatus = {};
+  }
+  if (!status || status === "idle") {
+    delete state.dietCalendar.generationStatus[normalizedDate];
+    return;
+  }
+  state.dietCalendar.generationStatus[normalizedDate] = {
+    status,
+    message,
+    updatedAt: new Date().toISOString()
+  };
+}
+
+function getPlanGenerationLabel(status) {
+  const labels = {
+    queued: "排队中",
+    generating: "生成中",
+    saved: "已保存",
+    failed: "生成失败"
+  };
+  return labels[status] || "";
 }
 
 function formatPlanDateLabel(isoDate) {
@@ -901,6 +1246,9 @@ function createDietPlanSnapshot(planDate, source = "generated") {
 function saveLocalDietPlanSnapshot(snapshot) {
   if (!snapshot?.planDate) return null;
   state.dietCalendar.savedDates[snapshot.planDate] = snapshot;
+  if (snapshot.plans?.length) {
+    setPlanGenerationStatus(snapshot.planDate, "saved");
+  }
   return saveDataRecord(getDietPlanRecordKey(snapshot.planDate), snapshot);
 }
 
@@ -955,15 +1303,819 @@ async function persistDietPlanSnapshot(snapshot, options = {}) {
   }
 }
 
+function getDietCheckinRecordKey(planDate) {
+  const userPart = state.auth.user?.id || "local";
+  return `diet.checkin.${userPart}.${normalizeIsoDate(planDate)}`;
+}
+
+function getHistoryMenuRecordKey(planDate) {
+  const userPart = state.auth.user?.id || "local";
+  return `diet.historyMenu.${userPart}.${normalizeIsoDate(planDate)}`;
+}
+
+function normalizeDietCheckin(rawCheckin, source = "local") {
+  if (!rawCheckin || typeof rawCheckin !== "object") return null;
+  const status = ["planned", "completed", "skipped"].includes(rawCheckin.status)
+    ? rawCheckin.status
+    : "completed";
+  const feedback = normalizeCheckinFeedback(rawCheckin.feedback || rawCheckin.menuSnapshot?.feedback || {});
+  return {
+    planDate: normalizeIsoDate(rawCheckin.planDate || state.dietCalendar.selectedDate || getTodayIsoDate()),
+    status,
+    selectedPlanIndex: Number.isFinite(Number(rawCheckin.selectedPlanIndex)) ? Number(rawCheckin.selectedPlanIndex) : 0,
+    planName: String(rawCheckin.planName || ""),
+    menuSnapshot: deepClone(rawCheckin.menuSnapshot || {}),
+    note: String(rawCheckin.note || ""),
+    feedback,
+    checkedAt: rawCheckin.checkedAt || rawCheckin.updatedAt || new Date().toISOString(),
+    createdAt: rawCheckin.createdAt || rawCheckin.updatedAt || new Date().toISOString(),
+    updatedAt: rawCheckin.updatedAt || new Date().toISOString(),
+    source,
+    dbSaved: source === "database" || Boolean(rawCheckin.dbSaved)
+  };
+}
+
+function normalizeHistoryMenu(rawMenu, source = "local") {
+  if (!rawMenu || typeof rawMenu !== "object") return null;
+  return {
+    planDate: normalizeIsoDate(rawMenu.planDate || state.dietCalendar.selectedDate || getTodayIsoDate()),
+    period: normalizePlanPeriod(rawMenu.period || state.dietCalendar.period),
+    selectedPlanIndex: Number.isFinite(Number(rawMenu.selectedPlanIndex)) ? Number(rawMenu.selectedPlanIndex) : 0,
+    planName: String(rawMenu.planName || ""),
+    profile: deepClone(rawMenu.profile || {}),
+    menuSnapshot: deepClone(rawMenu.menuSnapshot || {}),
+    createdAt: rawMenu.createdAt || rawMenu.updatedAt || new Date().toISOString(),
+    updatedAt: rawMenu.updatedAt || new Date().toISOString(),
+    source,
+    dbSaved: source === "database" || Boolean(rawMenu.dbSaved)
+  };
+}
+
+function saveLocalDietCheckin(checkin) {
+  const normalized = normalizeDietCheckin(checkin, checkin?.source || "local");
+  if (!normalized?.planDate) return null;
+  state.checkins[normalized.planDate] = normalized;
+  return saveDataRecord(getDietCheckinRecordKey(normalized.planDate), normalized);
+}
+
+function saveLocalHistoryMenu(menu) {
+  const normalized = normalizeHistoryMenu(menu, menu?.source || "local");
+  if (!normalized?.planDate) return null;
+  state.historyMenus[normalized.planDate] = normalized;
+  return saveDataRecord(getHistoryMenuRecordKey(normalized.planDate), normalized);
+}
+
+function readLocalDietCheckin(planDate) {
+  const record = readDataRecord(getDietCheckinRecordKey(planDate));
+  return normalizeDietCheckin(record?.value, "local");
+}
+
+function readLocalHistoryMenu(planDate) {
+  const record = readDataRecord(getHistoryMenuRecordKey(planDate));
+  return normalizeHistoryMenu(record?.value, "local");
+}
+
+function getDateRangeBetween(startDate, endDate) {
+  const start = normalizeIsoDate(startDate);
+  const end = normalizeIsoDate(endDate || start);
+  const dates = [];
+  let cursor = start;
+  while (cursor <= end && dates.length < 370) {
+    dates.push(cursor);
+    cursor = addDays(cursor, 1);
+  }
+  return dates;
+}
+
+function isCheckinDateAllowed(planDate) {
+  return normalizeIsoDate(planDate) <= getTodayIsoDate();
+}
+
+function getCheckinStatusLabel(status) {
+  const labels = {
+    planned: "待打卡",
+    completed: "已完成",
+    skipped: "已跳过"
+  };
+  return labels[status] || "未打卡";
+}
+
+function normalizeCheckinFeedback(raw = {}) {
+  const satiety = ["hungry", "just-right", "too-full"].includes(raw.satiety) ? raw.satiety : "just-right";
+  const difficulty = ["easy", "medium", "hard"].includes(raw.difficulty) ? raw.difficulty : "easy";
+  return {
+    satiety,
+    difficulty,
+    ateOut: Boolean(raw.ateOut),
+    updatedAt: raw.updatedAt || new Date().toISOString()
+  };
+}
+
+function getCheckinFeedbackLabel(feedback = {}) {
+  const satietyLabels = {
+    hungry: "偏饿",
+    "just-right": "刚好",
+    "too-full": "偏撑"
+  };
+  const difficultyLabels = {
+    easy: "容易执行",
+    medium: "一般",
+    hard: "较难执行"
+  };
+  const normalized = normalizeCheckinFeedback(feedback);
+  return `${satietyLabels[normalized.satiety]} · ${difficultyLabels[normalized.difficulty]}${normalized.ateOut ? " · 外食" : ""}`;
+}
+
+function collectCheckinFeedback() {
+  return normalizeCheckinFeedback({
+    satiety: document.getElementById("checkinSatiety")?.value || "just-right",
+    difficulty: document.getElementById("checkinDifficulty")?.value || "easy",
+    ateOut: Boolean(document.getElementById("checkinAteOut")?.checked)
+  });
+}
+
+async function fetchDietCustomerRecordsRange(startDate, endDate, options = {}) {
+  const dates = getDateRangeBetween(startDate, endDate);
+  dates.forEach(date => {
+    const localCheckin = readLocalDietCheckin(date);
+    const localMenu = readLocalHistoryMenu(date);
+    if (localCheckin) state.checkins[date] = localCheckin;
+    if (localMenu) state.historyMenus[date] = localMenu;
+  });
+
+  if (!state.auth.token) {
+    renderCheckinPanel();
+    return { checkins: [], menus: [] };
+  }
+
+  const query = new URLSearchParams({ startDate: dates[0], endDate: dates[dates.length - 1] || dates[0] });
+  try {
+    const [checkinData, menuData] = await Promise.all([
+      requestAuth(`/api/v1/diet/checkins?${query.toString()}`, { method: "GET" }),
+      requestAuth(`/api/v1/diet/history-menus?${query.toString()}`, { method: "GET" })
+    ]);
+    const checkins = (checkinData.checkins || []).map(item => normalizeDietCheckin(item, "database")).filter(Boolean);
+    const menus = (menuData.menus || []).map(item => normalizeHistoryMenu(item, "database")).filter(Boolean);
+    checkins.forEach(saveLocalDietCheckin);
+    menus.forEach(saveLocalHistoryMenu);
+    renderCheckinPanel();
+    return { checkins, menus };
+  } catch (err) {
+    if (!options.silent) {
+      addSystemLog("data", `读取客户打卡与历史菜单失败：${err.message || "账户服务不可用"}`);
+    }
+    renderCheckinPanel();
+    return { checkins: [], menus: [] };
+  }
+}
+
+function getSelectedMenuSnapshot() {
+  const planDate = getVisiblePlanDate();
+  const planIndex = getCurrentMenuPlanIndex();
+  const plan = state.plans[planIndex] || state.plans[state.activePlanIndex];
+  if (!plan) return null;
+  const selectedPlanIndex = state.plans.indexOf(plan);
+  return {
+    planDate,
+    period: state.dietCalendar.period,
+    selectedPlanIndex: selectedPlanIndex >= 0 ? selectedPlanIndex : 0,
+    planName: formatPlanLabelName(plan, selectedPlanIndex >= 0 ? selectedPlanIndex : 0),
+    plan: deepClone(plan),
+    meals: deepClone(plan.meals || []),
+    ingredients: normalizePlanIngredients(plan.ingredients),
+    calories: Number(plan.calories) || 0,
+    macros: normalizePlanMacros(plan.macros),
+    scores: normalizePlanScores(plan.scores),
+    profileSignature: getProfileSignature(state.formData),
+    savedAt: new Date().toISOString()
+  };
+}
+
+async function persistHistoryMenuForSelectedDate(options = {}) {
+  const menuSnapshot = getSelectedMenuSnapshot();
+  const planDate = menuSnapshot?.planDate || getVisiblePlanDate();
+  if (!menuSnapshot) {
+    if (!options.silent) addSystemLog("data", "当前日期还没有可保存的菜单。");
+    renderCheckinPanel();
+    return null;
+  }
+  if (!isCheckinDateAllowed(planDate)) {
+    if (!options.silent) addSystemLog("data", "未来日期不能写入客户打卡或历史菜单。");
+    renderCheckinPanel();
+    return null;
+  }
+
+  let menu = normalizeHistoryMenu({
+    planDate,
+    period: state.dietCalendar.period,
+    selectedPlanIndex: menuSnapshot.selectedPlanIndex,
+    planName: menuSnapshot.planName,
+    profile: state.formData,
+    menuSnapshot,
+    updatedAt: new Date().toISOString()
+  }, "local");
+  saveLocalHistoryMenu(menu);
+
+  if (state.auth.token && !options.skipBackend) {
+    try {
+      const data = await requestAuth("/api/v1/diet/history-menus", {
+        method: "POST",
+        body: JSON.stringify({
+          planDate,
+          period: state.dietCalendar.period,
+          selectedPlanIndex: menuSnapshot.selectedPlanIndex,
+          planName: menuSnapshot.planName,
+          profile: state.formData,
+          menuSnapshot
+        })
+      });
+      menu = normalizeHistoryMenu(data.menu, "database") || menu;
+      saveLocalHistoryMenu(menu);
+      if (!options.silent) {
+        addSystemLog("data", `${formatPlanDateLabel(planDate)} 历史菜单已写入数据库。`);
+      }
+    } catch (err) {
+      if (!options.silent) {
+        addSystemLog("data", `历史菜单数据库保存失败，已保留本地记录：${err.message || "账户服务不可用"}`);
+      }
+    }
+  } else if (!options.silent) {
+    addSystemLog("data", `${formatPlanDateLabel(planDate)} 历史菜单已保存到本地，登录后可同步数据库。`);
+  }
+
+  renderCheckinPanel();
+  return menu;
+}
+
+async function persistCheckinForSelectedDate(status = "completed", options = {}) {
+  const planDate = getVisiblePlanDate();
+  if (!isCheckinDateAllowed(planDate)) {
+    addSystemLog("data", "未来日期不能打卡；请选择当天或历史日期。");
+    renderCheckinPanel();
+    return null;
+  }
+
+  const note = document.getElementById("checkinNote")?.value.trim() || "";
+  const feedback = collectCheckinFeedback();
+  const menu = await persistHistoryMenuForSelectedDate({ silent: true });
+  const menuSnapshot = menu?.menuSnapshot || getSelectedMenuSnapshot();
+  if (!menuSnapshot) {
+    addSystemLog("data", "当前日期没有可打卡的菜单。");
+    renderCheckinPanel();
+    return null;
+  }
+
+  const menuSnapshotWithFeedback = {
+    ...menuSnapshot,
+    feedback
+  };
+  let checkin = normalizeDietCheckin({
+    planDate,
+    status,
+    selectedPlanIndex: menuSnapshotWithFeedback.selectedPlanIndex,
+    planName: menuSnapshotWithFeedback.planName,
+    menuSnapshot: menuSnapshotWithFeedback,
+    note,
+    feedback,
+    checkedAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString()
+  }, "local");
+  saveLocalDietCheckin(checkin);
+
+  if (state.auth.token && !options.skipBackend) {
+    try {
+      const data = await requestAuth("/api/v1/diet/checkins", {
+        method: "POST",
+        body: JSON.stringify({
+          planDate,
+          status,
+          selectedPlanIndex: menuSnapshotWithFeedback.selectedPlanIndex,
+          planName: menuSnapshotWithFeedback.planName,
+          menuSnapshot: menuSnapshotWithFeedback,
+          note,
+          checkedAt: checkin.checkedAt
+        })
+      });
+      checkin = normalizeDietCheckin(data.checkin, "database") || checkin;
+      saveLocalDietCheckin(checkin);
+      addSystemLog("data", `${formatPlanDateLabel(planDate)} 客户打卡已写入数据库：${getCheckinStatusLabel(status)}。`);
+    } catch (err) {
+      addSystemLog("data", `打卡数据库保存失败，已保留本地记录：${err.message || "账户服务不可用"}`);
+    }
+  } else {
+    addSystemLog("data", `${formatPlanDateLabel(planDate)} 客户打卡已保存到本地：${getCheckinStatusLabel(status)}。`);
+  }
+
+  await adjustNextDayPlanFromCheckin(checkin);
+  renderCheckinPanel();
+  return checkin;
+}
+
+function handleSaveCheckin(status) {
+  persistCheckinForSelectedDate(status);
+}
+
+function handleSaveHistoryMenu() {
+  if (!hasCommerceFeature("historyReview")) {
+    promptUpgradeForFeature("历史菜单复盘");
+    return;
+  }
+  persistHistoryMenuForSelectedDate();
+}
+
+function setTextById(id, text) {
+  const el = document.getElementById(id);
+  if (el) el.textContent = text;
+}
+
+function getCustomerHomePlanIndex() {
+  if (state.plans[state.selectedPlanIndex]) return state.selectedPlanIndex;
+  if (state.plans[state.activePlanIndex]) return state.activePlanIndex;
+  return 0;
+}
+
+function getCurrentMenuPlanIndex() {
+  if (state.currentStep === 5) return getCustomerHomePlanIndex();
+  return state.currentStep >= 3 && state.plans[state.selectedPlanIndex]
+    ? state.selectedPlanIndex
+    : state.activePlanIndex;
+}
+
+function getCustomerHomePlan() {
+  const index = getCustomerHomePlanIndex();
+  return {
+    index,
+    plan: state.plans[index] || state.plans[state.activePlanIndex] || null
+  };
+}
+
+function getLatestBodyMetricSummary() {
+  const current = collectBodyMetricFromInput("home", { silent: true }) || collectBodyMetricFromForm();
+  const records = readBodyMetricRecords();
+  const latest = records[records.length - 1] || null;
+  const previous = records.length >= 2 ? records[records.length - 2] : null;
+  const trendText = latest && previous
+    ? `较上次 ${latest.weight - previous.weight >= 0 ? "+" : ""}${(latest.weight - previous.weight).toFixed(1)}kg`
+    : latest
+      ? `最近记录 ${latest.weight}kg`
+      : "暂无记录";
+  return { current, records, latest, previous, trendText };
+}
+
+function renderCustomerHome() {
+  const view = document.getElementById("customer-home");
+  if (!view) return;
+
+  const planDate = getVisiblePlanDate();
+  const { plan, index } = getCustomerHomePlan();
+  const hasPlan = Boolean(plan);
+  const macros = normalizePlanMacros(plan?.macros || {});
+  const planName = hasPlan ? formatPlanLabelName(plan, index) : "尚未定制";
+  const checkin = state.checkins[planDate] || readLocalDietCheckin(planDate);
+  const bodySummary = getLatestBodyMetricSummary();
+  if (checkin) state.checkins[planDate] = checkin;
+
+  setTextById("homeStatusText", `${formatPlanDateLabel(planDate)} · ${hasPlan ? "计划已就绪" : "请先定制饮食计划"}`);
+  setTextById("homeDateLabel", formatPlanDateLabel(planDate));
+  setTextById("homePeriodLabel", `${getPlanPeriodLabel()} · 起始 ${formatPlanDateShort(state.dietCalendar.startDate || planDate)}`);
+  setTextById("homePlanName", planName);
+  setTextById("homePlanAngle", hasPlan ? (plan.angleLabel || getPlanAngleMeta(index).label) : "等待问卷画像");
+  setTextById("homePlanCalories", hasPlan ? `${plan.calories} kcal` : "-- kcal");
+  setTextById("homePlanMacros", hasPlan ? `碳水 ${macros.carbs}% · 蛋白 ${macros.protein}% · 脂肪 ${macros.fat}%` : "碳水 -- · 蛋白 -- · 脂肪 --");
+  setTextById("homeCheckinSummary", checkin ? getCheckinStatusLabel(checkin.status) : "未打卡");
+  setTextById("homeBodySummary", bodySummary.latest ? `${bodySummary.latest.weight}kg · BMI ${bodySummary.latest.bmi}` : "体重暂无记录");
+
+  const customizeBtn = document.getElementById("homeCustomizeCurrentBtn");
+  if (customizeBtn) {
+    customizeBtn.textContent = hasPlan ? "查看完整方案" : "定制饮食计划";
+    customizeBtn.disabled = false;
+  }
+
+  const ingredientsBtn = document.getElementById("homeViewIngredientsBtn");
+  if (ingredientsBtn) {
+    ingredientsBtn.disabled = !hasPlan;
+  }
+
+  renderCustomerHomeMeals(plan, index);
+  renderCustomerHomeBody();
+  renderCustomerHomeCheckin();
+}
+
+function renderCustomerHomeMeals(plan, planIndex) {
+  const list = document.getElementById("homeMealsList");
+  if (!list) return;
+
+  list.innerHTML = "";
+  if (!plan) {
+    const empty = document.createElement("div");
+    empty.className = "home-empty-state";
+    empty.textContent = "等待饮食计划生成";
+    list.appendChild(empty);
+    setTextById("homeMealStatus", "暂无当天计划");
+    return;
+  }
+
+  setTextById("homeMealStatus", `${formatPlanLabelName(plan, planIndex)} · ${plan.meals?.length || 0} 餐`);
+  (plan.meals || []).forEach(meal => {
+    const row = document.createElement("article");
+    row.className = "home-meal-row";
+
+    const icon = document.createElement("div");
+    icon.className = "home-meal-icon";
+    icon.textContent = meal.icon || "🍽️";
+
+    const detail = document.createElement("div");
+    detail.className = "home-meal-detail";
+
+    const title = document.createElement("strong");
+    title.textContent = meal.name || "餐次";
+    detail.appendChild(title);
+
+    const dishes = document.createElement("span");
+    dishes.textContent = splitMealDishes(meal.food).join("、") || meal.food || "暂无菜品";
+    detail.appendChild(dishes);
+
+    const cals = document.createElement("small");
+    cals.textContent = meal.cals || "";
+
+    row.appendChild(icon);
+    row.appendChild(detail);
+    row.appendChild(cals);
+    list.appendChild(row);
+  });
+}
+
+function renderCustomerHomeBody() {
+  const summaryGrid = document.getElementById("homeBodySummaryGrid");
+  const list = document.getElementById("homeBodyRecordList");
+  const status = document.getElementById("homeBodyTrendStatus");
+  if (!summaryGrid && !list && !status) return;
+
+  syncBodyMetricInputDefaults();
+  const { current, records, latest, trendText } = getLatestBodyMetricSummary();
+  if (status) {
+    status.textContent = latest
+      ? `${formatPlanDateShort(latest.date)} · ${latest.weight}kg`
+      : "暂无记录";
+  }
+
+  if (summaryGrid) {
+    summaryGrid.innerHTML = "";
+    const bmi = document.createElement("span");
+    bmi.textContent = current ? `当前 BMI：${current.bmi}（${current.status}）` : "当前 BMI：--";
+    const trend = document.createElement("span");
+    trend.textContent = `趋势：${trendText}`;
+    summaryGrid.appendChild(bmi);
+    summaryGrid.appendChild(trend);
+  }
+
+  if (list) {
+    list.innerHTML = "";
+    const latestRecords = records.slice(-5).reverse();
+    if (!latestRecords.length) {
+      const empty = document.createElement("span");
+      empty.textContent = "暂无身体数据记录";
+      list.appendChild(empty);
+    } else {
+      latestRecords.forEach(item => {
+        const chip = document.createElement("span");
+        chip.textContent = `${formatPlanDateShort(item.date)} · ${item.weight}kg · BMI ${item.bmi}`;
+        list.appendChild(chip);
+      });
+    }
+  }
+}
+
+function renderCustomerHomeCheckin() {
+  const card = document.getElementById("homeCheckinStatusCard");
+  const noteInput = document.getElementById("homeCheckinNote");
+  const completeBtn = document.getElementById("homeCompleteCheckinBtn");
+  const skipBtn = document.getElementById("homeSkipCheckinBtn");
+  const saveMenuBtn = document.getElementById("homeSaveHistoryMenuBtn");
+  const satietyInput = document.getElementById("homeCheckinSatiety");
+  const difficultyInput = document.getElementById("homeCheckinDifficulty");
+  const ateOutInput = document.getElementById("homeCheckinAteOut");
+  if (!card && !noteInput && !completeBtn && !skipBtn && !saveMenuBtn && !satietyInput && !difficultyInput && !ateOutInput) return;
+
+  const planDate = getVisiblePlanDate();
+  const { plan, index } = getCustomerHomePlan();
+  const checkin = state.checkins[planDate] || readLocalDietCheckin(planDate);
+  const historyMenu = state.historyMenus[planDate] || readLocalHistoryMenu(planDate);
+  if (checkin) state.checkins[planDate] = checkin;
+  if (historyMenu) state.historyMenus[planDate] = historyMenu;
+
+  const allowed = isCheckinDateAllowed(planDate);
+  const disabled = !allowed || !plan;
+  const planName = plan ? formatPlanLabelName(plan, index) : "等待计划生成";
+  setTextById("homeCheckinSummary", checkin ? getCheckinStatusLabel(checkin.status) : "未打卡");
+
+  if (card) {
+    card.innerHTML = "";
+    [
+      ["打卡日期", formatPlanDateLabel(planDate)],
+      ["客户菜单", planName],
+      ["打卡状态", checkin ? `${getCheckinStatusLabel(checkin.status)} · ${formatDateTime(checkin.checkedAt || checkin.updatedAt)}` : "未打卡"],
+      ["历史菜单", historyMenu ? `${historyMenu.dbSaved ? "数据库已保存" : "本地已保存"} · ${formatDateTime(historyMenu.updatedAt)}` : "未保存"],
+      ["执行反馈", checkin ? getCheckinFeedbackLabel(checkin.feedback) : "未记录"]
+    ].forEach(([label, value]) => {
+      const row = document.createElement("div");
+      row.className = "checkin-status-row";
+      const labelEl = document.createElement("span");
+      labelEl.textContent = label;
+      const valueEl = document.createElement("strong");
+      valueEl.textContent = value;
+      row.appendChild(labelEl);
+      row.appendChild(valueEl);
+      card.appendChild(row);
+    });
+
+    const note = document.createElement("div");
+    note.className = "checkin-plan-note";
+    note.textContent = allowed
+      ? "可保存今日及历史日期的客户打卡与菜单。"
+      : "未来日期仅展示计划，不允许写入打卡或历史菜单。";
+    card.appendChild(note);
+  }
+
+  if (noteInput) {
+    if (document.activeElement !== noteInput) {
+      noteInput.value = checkin?.note || "";
+    }
+    noteInput.disabled = disabled;
+  }
+  if (satietyInput) {
+    satietyInput.value = checkin?.feedback?.satiety || "just-right";
+    satietyInput.disabled = disabled;
+  }
+  if (difficultyInput) {
+    difficultyInput.value = checkin?.feedback?.difficulty || "easy";
+    difficultyInput.disabled = disabled;
+  }
+  if (ateOutInput) {
+    ateOutInput.checked = Boolean(checkin?.feedback?.ateOut);
+    ateOutInput.disabled = disabled;
+  }
+  [completeBtn, skipBtn, saveMenuBtn].forEach(button => {
+    if (button) button.disabled = disabled;
+  });
+}
+
+function syncHomeCheckinInputsToMain() {
+  const mappings = [
+    ["homeCheckinNote", "checkinNote", "value"],
+    ["homeCheckinSatiety", "checkinSatiety", "value"],
+    ["homeCheckinDifficulty", "checkinDifficulty", "value"],
+    ["homeCheckinAteOut", "checkinAteOut", "checked"]
+  ];
+  mappings.forEach(([homeId, mainId, prop]) => {
+    const source = document.getElementById(homeId);
+    const target = document.getElementById(mainId);
+    if (source && target) target[prop] = source[prop];
+  });
+}
+
+async function handleHomeSaveCheckin(status) {
+  syncHomeCheckinInputsToMain();
+  await persistCheckinForSelectedDate(status);
+  renderCustomerHome();
+}
+
+async function handleHomeSaveHistoryMenu() {
+  if (!hasCommerceFeature("historyReview")) {
+    promptUpgradeForFeature("历史菜单复盘");
+    return;
+  }
+  syncHomeCheckinInputsToMain();
+  await persistHistoryMenuForSelectedDate();
+  renderCustomerHome();
+}
+
+function openCurrentPlanForCustomization() {
+  if (!state.plans.length) {
+    goToStep(1);
+    addSystemLog("client", "暂无可定制的当前计划，请先填写问卷生成饮食计划。");
+    return;
+  }
+  state.activePlanIndex = getCustomerHomePlanIndex();
+  goToStep(2);
+  renderDietPlans();
+  addSystemLog("diet", "已进入完整方案页；如需重算，请使用多 Agent 讨论区的重新生成当天按钮。");
+}
+
+function openHomeIngredients() {
+  if (!state.plans.length) {
+    addSystemLog("ingredient", "暂无可用饮食计划，请先完成问卷并生成计划。");
+    renderCustomerHome();
+    return;
+  }
+  state.activePlanIndex = getCustomerHomePlanIndex();
+  state.selectedPlanIndex = state.activePlanIndex;
+  goToStep(4);
+  renderIngredients();
+}
+
+function getFeedbackAdjustmentRecordKey(planDate) {
+  const owner = state.auth.user?.id || "local";
+  return `diet.feedbackAdjustment.${owner}.${normalizeIsoDate(planDate)}`;
+}
+
+function savePendingFeedbackAdjustment(planDate, adjustment) {
+  const normalizedDate = normalizeIsoDate(planDate);
+  const value = {
+    id: adjustment.id || `feedback-${normalizedDate}-${Date.now().toString(36)}`,
+    targetDate: normalizedDate,
+    ...adjustment,
+    updatedAt: new Date().toISOString()
+  };
+  saveDataRecord(getFeedbackAdjustmentRecordKey(normalizedDate), value);
+  return value;
+}
+
+function readPendingFeedbackAdjustment(planDate) {
+  const record = readDataRecord(getFeedbackAdjustmentRecordKey(planDate));
+  return record?.value && typeof record.value === "object" ? record.value : null;
+}
+
+function getFeedbackAdjustmentSummary(feedback, status) {
+  const notes = [];
+  if (status === "skipped") notes.push("上一日跳过打卡，次日降低备餐复杂度");
+  if (feedback.satiety === "hungry") notes.push("上一日偏饿，次日增加高纤维与蛋白加餐");
+  if (feedback.satiety === "too-full") notes.push("上一日偏撑，次日晚餐改为轻负担组合");
+  if (feedback.difficulty === "hard") notes.push("执行难度较高，次日改为更快手的餐单");
+  if (feedback.ateOut) notes.push("上一日外食较多，次日降低油盐并提高蔬菜占比");
+  return notes.join("；") || "上一日反馈良好，次日保持原计划";
+}
+
+function buildFeedbackAdjustment(checkin) {
+  const feedback = normalizeCheckinFeedback(checkin?.feedback || {});
+  return {
+    id: `feedback-${checkin.planDate}-${Date.now().toString(36)}`,
+    sourceDate: checkin.planDate,
+    status: checkin.status,
+    feedback,
+    summary: getFeedbackAdjustmentSummary(feedback, checkin.status),
+    createdAt: new Date().toISOString()
+  };
+}
+
+function adjustMealByFeedback(meal, planIndex, mealIndex, adjustment) {
+  const feedback = normalizeCheckinFeedback(adjustment.feedback);
+  let food = meal.food;
+  let changed = false;
+  const profile = state.formData;
+  const isVegan = profile.dietHabit === "vegan";
+  const avoidGluten = profile.allergies?.includes("gluten");
+  const simpleProtein = isVegan ? "香煎豆腐" : "去皮鸡胸肉";
+  const simpleGrain = avoidGluten ? "玉米段" : "杂粮饭";
+
+  if (meal.name.includes("早餐") && (feedback.difficulty === "hard" || adjustment.status === "skipped")) {
+    food = isVegan
+      ? `无糖豆浆1杯 + 豆腐蔬菜卷 + 小番茄`
+      : `无糖豆浆1杯 + 水煮蛋1个 + ${avoidGluten ? "蒸紫薯" : "燕麦杯"}`;
+    changed = true;
+  }
+
+  if (meal.name.includes("午餐") && (feedback.ateOut || feedback.difficulty === "hard")) {
+    food = `${simpleProtein}时蔬便当 + ${simpleGrain}`;
+    changed = true;
+  }
+
+  if (meal.name.includes("晚餐") && (feedback.satiety === "too-full" || feedback.ateOut)) {
+    food = isVegan
+      ? "番茄菌菇豆腐汤 + 清炒油麦菜"
+      : "番茄豆腐鸡丝汤 + 白灼绿叶菜";
+    changed = true;
+  }
+
+  if (meal.name.includes("加餐") && feedback.satiety === "hungry") {
+    food = isVegan
+      ? "无糖豆浆半杯 + 毛豆仁80g"
+      : "希腊酸奶半杯 + 鸡蛋白1个";
+    changed = true;
+  }
+
+  if (!changed && feedback.satiety === "hungry" && meal.name.includes("午餐")) {
+    food = appendDateSideDish(food, "凉拌黄瓜150g");
+    changed = true;
+  }
+
+  if (!changed) return meal;
+  return {
+    ...meal,
+    food,
+    adjustedByCheckin: true,
+    feedbackSourceDate: adjustment.sourceDate,
+    id: meal.id || createMealId(planIndex, meal.name, mealIndex)
+  };
+}
+
+function applyFeedbackAdjustmentToSnapshot(snapshot, adjustment) {
+  const normalized = normalizeDietPlanSnapshot(snapshot, snapshot?.source || "local");
+  if (!normalized?.plans?.length || !adjustment) return normalized;
+  if (normalized.metrics?.feedbackAdjustmentId === adjustment.id) return normalized;
+
+  const feedback = normalizeCheckinFeedback(adjustment.feedback);
+  const calorieDelta = feedback.satiety === "hungry" ? 80 : feedback.satiety === "too-full" || feedback.ateOut ? -70 : 0;
+  const adjustedPlans = normalized.plans.map((plan, planIndex) => {
+    const meals = (plan.meals || []).map((meal, mealIndex) => adjustMealByFeedback(meal, planIndex, mealIndex, adjustment));
+    const macros = normalizePlanMacros(plan.macros);
+    const adjustedMacros = feedback.satiety === "hungry"
+      ? normalizeMacroParts(macros.carbs + 1, macros.protein + 2, macros.fat - 3, macros)
+      : feedback.satiety === "too-full" || feedback.ateOut
+        ? normalizeMacroParts(macros.carbs - 2, macros.protein + 1, macros.fat + 1, macros)
+        : macros;
+    const adjustedPlan = {
+      ...plan,
+      calories: Math.max(1100, Math.round((Number(plan.calories) || state.targetCalories || 1500) + calorieDelta)),
+      macros: adjustedMacros,
+      meals,
+      feedbackAdjusted: true,
+      agentNotes: `${plan.agentNotes || "已生成方案"}；${adjustment.summary}`
+    };
+    adjustedPlan.ingredients = buildIngredientsFromMeals(adjustedPlan, normalized.profile || state.formData);
+    adjustedPlan.agentScore = calculatePlanAgentScore(adjustedPlan, planIndex);
+    return adjustedPlan;
+  });
+
+  return {
+    ...normalized,
+    plans: adjustedPlans,
+    metrics: {
+      ...(normalized.metrics || {}),
+      feedbackAdjustmentId: adjustment.id,
+      feedbackAdjustment: {
+        sourceDate: adjustment.sourceDate,
+        summary: adjustment.summary,
+        feedback
+      }
+    },
+    updatedAt: new Date().toISOString()
+  };
+}
+
+async function persistAdjustedSnapshot(snapshot, options = {}) {
+  if (!snapshot?.planDate) return null;
+  const result = await persistDietPlanSnapshot(snapshot, { silent: true, skipBackend: options.skipBackend });
+  state.dietCalendar.savedDates[result.snapshot.planDate] = result.snapshot;
+  saveLocalDietPlanSnapshot(result.snapshot);
+  return result.snapshot;
+}
+
+function applyPendingFeedbackAdjustmentToSnapshot(snapshot) {
+  if (!snapshot?.planDate) return snapshot;
+  const adjustment = readPendingFeedbackAdjustment(snapshot.planDate);
+  if (!adjustment) return snapshot;
+  return applyFeedbackAdjustmentToSnapshot(snapshot, adjustment);
+}
+
+async function adjustNextDayPlanFromCheckin(checkin) {
+  if (!checkin?.planDate) return null;
+  const feedback = normalizeCheckinFeedback(checkin.feedback);
+  const shouldAdjust = checkin.status === "skipped"
+    || feedback.satiety !== "just-right"
+    || feedback.difficulty === "hard"
+    || feedback.ateOut;
+  if (!shouldAdjust) return null;
+
+  const nextDate = addDays(checkin.planDate, 1);
+  const adjustment = savePendingFeedbackAdjustment(nextDate, buildFeedbackAdjustment(checkin));
+  let snapshot = state.dietCalendar.savedDates[nextDate] || readLocalDietPlanSnapshot(nextDate);
+  if (!snapshot?.plans?.length && state.auth.token) {
+    try {
+      snapshot = await fetchDietPlanFromDb(nextDate);
+    } catch (err) {
+      snapshot = null;
+    }
+  }
+
+  if (snapshot?.plans?.length) {
+    const adjusted = applyFeedbackAdjustmentToSnapshot(snapshot, adjustment);
+    await persistAdjustedSnapshot(adjusted);
+    if (getVisiblePlanDate() === nextDate) {
+      applyDietPlanSnapshot(adjusted);
+      renderVisibleDietPlanIfNeeded();
+    }
+    addSystemLog("diet", `${formatPlanDateLabel(nextDate)} 已根据打卡反馈自动调整：${adjustment.summary}。`);
+    return adjusted;
+  }
+
+  addSystemLog("diet", `${formatPlanDateLabel(nextDate)} 尚未生成，已记录次日自动调整规则：${adjustment.summary}。`);
+  return null;
+}
+
 function applyDietPlanSnapshot(snapshot, options = {}) {
   const normalized = normalizeDietPlanSnapshot(snapshot, snapshot?.source || "local");
   if (!normalized) return false;
 
   state.dietCalendar.selectedDate = normalized.planDate;
+  state.dietCalendar.visibleDate = normalized.planDate;
   if (options.applyPeriod) {
     state.dietCalendar.period = normalizePlanPeriod(normalized.period);
   }
   state.dietCalendar.savedDates[normalized.planDate] = normalized;
+  if (normalized.plans?.length) {
+    setPlanGenerationStatus(normalized.planDate, "saved");
+  }
   state.dietCalendar.lastSource = normalized.source;
   state.plans = deepClone(normalized.plans || []);
   state.planDiscussion = normalizePlanDiscussion(normalized.planDiscussion);
@@ -1392,15 +2544,216 @@ function hasUsableIngredients(ingredients) {
     && Object.values(ingredients).some(items => Array.isArray(items) && items.length > 0);
 }
 
+async function resolveStoredDietPlanSnapshot(planDate, options = {}) {
+  const normalizedDate = normalizeIsoDate(planDate);
+  if (options.forceRegenerate) return null;
+
+  let snapshot = state.dietCalendar.savedDates[normalizedDate] || readLocalDietPlanSnapshot(normalizedDate);
+  snapshot = getUsableDietPlanSnapshot(snapshot, normalizedDate, options.sourceLabel ?? "本地/数据库中");
+  if (snapshot?.plans?.length) {
+    snapshot = applyPendingFeedbackAdjustmentToSnapshot(snapshot);
+    state.dietCalendar.savedDates[normalizedDate] = snapshot;
+    saveLocalDietPlanSnapshot(snapshot);
+    return snapshot;
+  }
+
+  if (!state.auth.token || options.skipDb) return null;
+
+  try {
+    snapshot = getUsableDietPlanSnapshot(await fetchDietPlanFromDb(normalizedDate), normalizedDate, "数据库中");
+    if (snapshot?.plans?.length) {
+      snapshot = applyPendingFeedbackAdjustmentToSnapshot(snapshot);
+      state.dietCalendar.savedDates[normalizedDate] = snapshot;
+      saveLocalDietPlanSnapshot(snapshot);
+      if (!options.silent) {
+        addSystemLog("data", `已读取 ${formatPlanDateLabel(normalizedDate)} 的数据库饮食计划。`);
+      }
+      return snapshot;
+    }
+  } catch (err) {
+    if (!options.silent) {
+      addSystemLog("data", `读取 ${formatPlanDateLabel(normalizedDate)} 数据库计划失败，改用本地流程：${err.message || "账户服务不可用"}`);
+    }
+  }
+
+  return null;
+}
+
+function clearCurrentPlanForPendingDate(planDate) {
+  const normalizedDate = setVisiblePlanDate(planDate);
+  state.plans = [];
+  state.activePlanIndex = 0;
+  state.selectedPlanIndex = 0;
+  state.planDiscussion = createEmptyPlanDiscussion();
+  state.planConstraints = createEmptyPlanConstraints();
+  saveDataRecord("diet.plans.current", state.plans);
+  return normalizedDate;
+}
+
+function restoreVisibleDietPlanSnapshot(planDate, activeIndex = state.activePlanIndex, selectedIndex = state.selectedPlanIndex) {
+  const normalizedDate = normalizeIsoDate(planDate);
+  const snapshot = state.dietCalendar.savedDates[normalizedDate] || getUsableDietPlanSnapshot(readLocalDietPlanSnapshot(normalizedDate), normalizedDate, "");
+  if (snapshot?.plans?.length) {
+    applyDietPlanSnapshot(snapshot);
+    state.activePlanIndex = Math.min(activeIndex, Math.max(0, state.plans.length - 1));
+    state.selectedPlanIndex = Math.min(selectedIndex, Math.max(0, state.plans.length - 1));
+    return true;
+  }
+  clearCurrentPlanForPendingDate(normalizedDate);
+  return false;
+}
+
+function renderVisibleDietPlanIfNeeded() {
+  if (state.currentStep === 2) {
+    renderDietPlans();
+  } else if (state.currentStep === 3 && state.plans.length) {
+    evaluatePlansRealtime();
+  } else if (state.currentStep === 4) {
+    renderIngredients();
+  } else if (state.currentStep === 5) {
+    renderCustomerHome();
+  }
+}
+
+async function generateAndPersistDietPlanForDate(planDate, options = {}) {
+  const normalizedDate = normalizeIsoDate(planDate);
+  const visibleBefore = getVisiblePlanDate();
+  const activeBefore = state.activePlanIndex;
+  const selectedBefore = state.selectedPlanIndex;
+  setPlanGenerationStatus(normalizedDate, "generating");
+  renderPlanCalendarControls();
+
+  try {
+    let snapshot = await generateDietPlanSnapshotForDateAsync(normalizedDate, {
+      reason: options.reason || "initial",
+      planConstraints: options.planConstraints || createEmptyPlanConstraints(),
+      rangeDates: options.rangeDates || getPlanDateRange()
+    });
+    const result = await persistDietPlanSnapshot(snapshot, {
+      skipBackend: Boolean(options.skipBackend),
+      silent: Boolean(options.silent)
+    });
+    snapshot = result.snapshot;
+    const adjustedSnapshot = applyPendingFeedbackAdjustmentToSnapshot(snapshot);
+    if (adjustedSnapshot?.metrics?.feedbackAdjustmentId && adjustedSnapshot.metrics.feedbackAdjustmentId !== snapshot.metrics?.feedbackAdjustmentId) {
+      snapshot = await persistAdjustedSnapshot(adjustedSnapshot, { skipBackend: Boolean(options.skipBackend) }) || adjustedSnapshot;
+    }
+    setPlanGenerationStatus(normalizedDate, "saved");
+
+    const desiredVisibleDate = getVisiblePlanDate() || visibleBefore;
+    if (!options.preserveVisible || desiredVisibleDate === normalizedDate) {
+      applyDietPlanSnapshot(snapshot);
+    } else {
+      restoreVisibleDietPlanSnapshot(desiredVisibleDate, activeBefore, selectedBefore);
+    }
+
+    renderPlanCalendarControls();
+    renderVisibleDietPlanIfNeeded();
+    return { ...result, snapshot };
+  } catch (err) {
+    setPlanGenerationStatus(normalizedDate, "failed", err.message || "生成失败");
+    if (getVisiblePlanDate() === normalizedDate) {
+      clearCurrentPlanForPendingDate(normalizedDate);
+      renderVisibleDietPlanIfNeeded();
+    } else if (options.preserveVisible) {
+      restoreVisibleDietPlanSnapshot(visibleBefore, activeBefore, selectedBefore);
+    }
+    renderPlanCalendarControls();
+    throw err;
+  }
+}
+
+function enqueueBackgroundDietPlanDates(dates, options = {}) {
+  const queue = Array.isArray(state.dietCalendar.backgroundQueue)
+    ? state.dietCalendar.backgroundQueue
+    : [];
+  const queuedDates = new Set(queue.map(item => item.planDate));
+
+  dates.map(normalizeIsoDate).forEach(planDate => {
+    const snapshot = state.dietCalendar.savedDates[planDate];
+    if (snapshot?.plans?.length) {
+      setPlanGenerationStatus(planDate, "saved");
+      return;
+    }
+    if (getPlanGenerationStatus(planDate) === "generating") return;
+    setPlanGenerationStatus(planDate, "queued");
+    if (!queuedDates.has(planDate)) {
+      queue.push({
+        planDate,
+        reason: options.reason || "background",
+        rangeDates: options.rangeDates || getPlanDateRange(),
+        skipBackend: Boolean(options.skipBackend)
+      });
+      queuedDates.add(planDate);
+    }
+  });
+
+  state.dietCalendar.backgroundQueue = queue;
+  renderPlanCalendarControls();
+  runDietPlanBackgroundQueue();
+}
+
+async function runDietPlanBackgroundQueue() {
+  if (state.dietCalendar.backgroundQueueRunning) return;
+  state.dietCalendar.backgroundQueueRunning = true;
+  let backendAvailable = Boolean(state.auth.token);
+
+  try {
+    while (Array.isArray(state.dietCalendar.backgroundQueue) && state.dietCalendar.backgroundQueue.length > 0) {
+      const item = state.dietCalendar.backgroundQueue.shift();
+      const planDate = normalizeIsoDate(item.planDate);
+      if (state.dietCalendar.savedDates[planDate]?.plans?.length) {
+        setPlanGenerationStatus(planDate, "saved");
+        continue;
+      }
+
+      const stored = await resolveStoredDietPlanSnapshot(planDate, {
+        skipDb: item.skipBackend,
+        silent: true,
+        sourceLabel: ""
+      });
+      if (stored?.plans?.length) {
+        setPlanGenerationStatus(planDate, "saved");
+        if (getVisiblePlanDate() === planDate) {
+          applyDietPlanSnapshot(stored);
+          renderVisibleDietPlanIfNeeded();
+        }
+        continue;
+      }
+
+      try {
+        const result = await generateAndPersistDietPlanForDate(planDate, {
+          reason: item.reason,
+          planConstraints: createEmptyPlanConstraints(),
+          rangeDates: item.rangeDates,
+          skipBackend: item.skipBackend || !backendAvailable,
+          silent: true,
+          preserveVisible: true
+        });
+        if (!result.savedToDb && result.error) {
+          backendAvailable = false;
+        }
+      } catch (err) {
+        addSystemLog("diet", `${formatPlanDateLabel(planDate)} 后台生成失败：${err.message || "未知错误"}`);
+      }
+    }
+  } finally {
+    state.dietCalendar.backgroundQueueRunning = false;
+    renderPlanCalendarControls();
+  }
+}
+
 async function prepareDietPlansForCurrentRange(options = {}) {
   syncPlanCalendarFromInputs();
   const dates = getPlanDateRange();
   if (!dates.length) return null;
 
+  const requestedDate = normalizeIsoDate(state.dietCalendar.selectedDate || state.dietCalendar.visibleDate || dates[0]);
+  const requestedSelectedDate = dates.includes(requestedDate) ? requestedDate : dates[0];
+  setVisiblePlanDate(requestedSelectedDate);
   state.dietCalendar.loading = true;
   renderPlanCalendarControls();
 
-  const requestedSelectedDate = state.dietCalendar.selectedDate;
   const selectedConstraints = normalizePlanConstraints(state.planConstraints);
   let backendAvailable = Boolean(state.auth.token);
   if (backendAvailable) {
@@ -1423,112 +2776,128 @@ async function prepareDietPlansForCurrentRange(options = {}) {
       addSystemLog("data", `读取数据库饮食计划失败，改用本地记录或重新生成：${err.message || "账户服务不可用"}`);
     }
   }
+  fetchDietCustomerRecordsRange(dates[0], dates[dates.length - 1], { silent: true });
 
-  for (const planDate of dates) {
-    let snapshot = state.dietCalendar.savedDates[planDate] || readLocalDietPlanSnapshot(planDate);
-    snapshot = getUsableDietPlanSnapshot(snapshot, planDate, "");
-    if (options.forceRegenerate && planDate === requestedSelectedDate) {
-      snapshot = null;
+  let selectedSnapshot = await resolveStoredDietPlanSnapshot(requestedSelectedDate, {
+    forceRegenerate: Boolean(options.forceRegenerate),
+    skipDb: true,
+    silent: true,
+    sourceLabel: ""
+  });
+
+  if (!selectedSnapshot?.plans?.length) {
+    const result = await generateAndPersistDietPlanForDate(requestedSelectedDate, {
+      reason: options.reason || "initial",
+      planConstraints: selectedConstraints,
+      rangeDates: dates,
+      skipBackend: !backendAvailable,
+      silent: false,
+      preserveVisible: false
+    });
+    selectedSnapshot = result.snapshot;
+    if (!result.savedToDb && backendAvailable && result.error) {
+      backendAvailable = false;
+      addSystemLog("data", `饮食计划数据库保存失败，后续日期将仅保存本地：${result.error.message || "账户服务不可用"}`);
     }
-
-    if (!snapshot?.plans?.length) {
-      const constraints = planDate === requestedSelectedDate
-        ? selectedConstraints
-        : createEmptyPlanConstraints();
-      snapshot = await generateDietPlanSnapshotForDateAsync(planDate, {
-        reason: options.reason || "initial",
-        planConstraints: constraints,
-        rangeDates: dates
-      });
-      const result = await persistDietPlanSnapshot(snapshot, {
-        skipBackend: !backendAvailable,
-        silent: dates.length > 1
-      });
-      snapshot = result.snapshot;
-      if (!result.savedToDb && backendAvailable && result.error) {
+  } else {
+    if (backendAvailable && state.auth.token && !selectedSnapshot.dbSaved) {
+      const result = await persistDietPlanSnapshot(selectedSnapshot, { silent: true });
+      selectedSnapshot = result.snapshot;
+      if (!result.savedToDb && result.error) {
         backendAvailable = false;
-        addSystemLog("data", `饮食计划数据库保存失败，后续日期将仅保存本地：${result.error.message || "账户服务不可用"}`);
+        addSystemLog("data", `本地饮食计划同步数据库失败，后续日期暂不重试：${result.error.message || "账户服务不可用"}`);
       }
-    } else {
+    }
+    applyDietPlanSnapshot(selectedSnapshot);
+  }
+
+  state.dietCalendar.loading = false;
+  renderPlanCalendarControls();
+
+  const backgroundDates = [];
+  dates.forEach(planDate => {
+    if (planDate === requestedSelectedDate) return;
+    const snapshot = getUsableDietPlanSnapshot(
+      state.dietCalendar.savedDates[planDate] || readLocalDietPlanSnapshot(planDate),
+      planDate,
+      ""
+    );
+    if (snapshot?.plans?.length) {
       state.dietCalendar.savedDates[planDate] = snapshot;
       saveLocalDietPlanSnapshot(snapshot);
       if (backendAvailable && state.auth.token && !snapshot.dbSaved) {
-        const result = await persistDietPlanSnapshot(snapshot, { silent: dates.length > 1 });
-        snapshot = result.snapshot;
-        if (!result.savedToDb && result.error) {
-          backendAvailable = false;
-          addSystemLog("data", `本地饮食计划同步数据库失败，后续日期暂不重试：${result.error.message || "账户服务不可用"}`);
-        }
+        persistDietPlanSnapshot(snapshot, { silent: true });
       }
+    } else {
+      backgroundDates.push(planDate);
     }
+  });
+
+  if (backgroundDates.length) {
+    enqueueBackgroundDietPlanDates(backgroundDates, {
+      reason: "background",
+      rangeDates: dates,
+      skipBackend: !backendAvailable
+    });
+    addSystemLog("diet", `当前日期计划已展示，剩余 ${backgroundDates.length} 天已进入后台生成队列。`);
   }
 
-  const selectedDate = dates.includes(requestedSelectedDate)
-    ? requestedSelectedDate
-    : dates[0];
-  const selectedSnapshot = state.dietCalendar.savedDates[selectedDate] || state.dietCalendar.savedDates[dates[0]];
-  applyDietPlanSnapshot(selectedSnapshot);
-  state.dietCalendar.loading = false;
-  renderPlanCalendarControls();
   return selectedSnapshot;
 }
 
 async function loadOrGenerateDietPlanForDate(planDate, options = {}) {
   const normalizedDate = normalizeIsoDate(planDate);
-  state.dietCalendar.selectedDate = normalizedDate;
+  setVisiblePlanDate(normalizedDate);
   state.dietCalendar.loading = true;
   renderPlanCalendarControls();
+  fetchDietCustomerRecordsRange(normalizedDate, normalizedDate, { silent: true });
 
-  let snapshot = options.forceRegenerate
-    ? null
-    : state.dietCalendar.savedDates[normalizedDate] || readLocalDietPlanSnapshot(normalizedDate);
-  snapshot = options.forceRegenerate
-    ? null
-    : getUsableDietPlanSnapshot(snapshot, normalizedDate, "本地/数据库中");
-
-  if (!snapshot?.plans?.length && state.auth.token && !options.forceRegenerate) {
-    try {
-      snapshot = getUsableDietPlanSnapshot(await fetchDietPlanFromDb(normalizedDate), normalizedDate, "数据库中");
-      if (snapshot) {
-        state.dietCalendar.savedDates[normalizedDate] = snapshot;
-        saveLocalDietPlanSnapshot(snapshot);
-        addSystemLog("data", `已读取 ${formatPlanDateLabel(normalizedDate)} 的数据库饮食计划。`);
-      }
-    } catch (err) {
-      addSystemLog("data", `读取当天数据库计划失败，改用本地流程：${err.message || "账户服务不可用"}`);
-    }
-  }
-
-  if (!snapshot?.plans?.length) {
-    snapshot = await generateDietPlanSnapshotForDateAsync(normalizedDate, {
-      reason: options.reason || (options.forceRegenerate ? "regenerate" : "initial"),
-      planConstraints: options.forceRegenerate ? state.planConstraints : createEmptyPlanConstraints(),
-      rangeDates: options.rangeDates || getPlanDateRange()
+  try {
+    let snapshot = await resolveStoredDietPlanSnapshot(normalizedDate, {
+      forceRegenerate: Boolean(options.forceRegenerate),
+      sourceLabel: "本地/数据库中"
     });
-    const result = await persistDietPlanSnapshot(snapshot);
-    snapshot = result.snapshot;
-  }
 
-  applyDietPlanSnapshot(snapshot);
-  state.dietCalendar.loading = false;
-  renderPlanCalendarControls();
-  return snapshot;
+    if (!snapshot?.plans?.length) {
+      const status = getPlanGenerationStatus(normalizedDate);
+      if (!options.forceRegenerate && (status === "queued" || status === "generating")) {
+        clearCurrentPlanForPendingDate(normalizedDate);
+        return null;
+      }
+
+      const result = await generateAndPersistDietPlanForDate(normalizedDate, {
+        reason: options.reason || (options.forceRegenerate ? "regenerate" : "initial"),
+        planConstraints: options.forceRegenerate ? state.planConstraints : createEmptyPlanConstraints(),
+        rangeDates: options.rangeDates || getPlanDateRange(),
+        preserveVisible: false
+      });
+      snapshot = result.snapshot;
+    }
+
+    applyDietPlanSnapshot(snapshot);
+    return snapshot;
+  } finally {
+    state.dietCalendar.loading = false;
+    renderPlanCalendarControls();
+  }
 }
 
 function syncPlanCalendarFromInputs() {
   const checkedPeriod = document.querySelector("input[name='planPeriod']:checked")?.value;
   const startInput = document.getElementById("planStartDate");
-  state.dietCalendar.period = normalizePlanPeriod(checkedPeriod || state.dietCalendar.period);
+  state.dietCalendar.period = getAllowedPlanPeriod(checkedPeriod || state.dietCalendar.period);
   state.dietCalendar.startDate = normalizeIsoDate(startInput?.value || state.dietCalendar.startDate || getTodayIsoDate());
   if (!state.dietCalendar.selectedDate || !getPlanDateRange().includes(state.dietCalendar.selectedDate)) {
-    state.dietCalendar.selectedDate = state.dietCalendar.startDate;
+    setVisiblePlanDate(state.dietCalendar.startDate);
+  } else {
+    state.dietCalendar.visibleDate = state.dietCalendar.selectedDate;
   }
 }
 
 function initPlanCalendarControls() {
   const today = getTodayIsoDate();
   state.dietCalendar.startDate = normalizeIsoDate(state.dietCalendar.startDate || today);
-  state.dietCalendar.selectedDate = normalizeIsoDate(state.dietCalendar.selectedDate || state.dietCalendar.startDate);
+  setVisiblePlanDate(state.dietCalendar.selectedDate || state.dietCalendar.startDate);
 
   document.querySelectorAll("input[name='planPeriod']").forEach(input => {
     input.addEventListener("change", () => {
@@ -1563,29 +2932,43 @@ function initPlanCalendarControls() {
 }
 
 function setPlanPeriod(period) {
-  state.dietCalendar.period = normalizePlanPeriod(period);
+  const requestedPeriod = normalizePlanPeriod(period);
+  const nextPeriod = getAllowedPlanPeriod(requestedPeriod, { announce: true });
+  const changed = state.dietCalendar.period !== nextPeriod;
+  state.dietCalendar.period = nextPeriod;
   const dates = getPlanDateRange();
   if (!dates.includes(state.dietCalendar.selectedDate)) {
-    state.dietCalendar.selectedDate = dates[0];
+    setVisiblePlanDate(dates[0]);
   }
   renderPlanCalendarControls();
-  reloadDietPlansAfterCalendarChange();
+  if (changed) {
+    reloadDietPlansAfterCalendarChange();
+  }
 }
 
 function setPlanStartDate(value) {
   state.dietCalendar.startDate = normalizeIsoDate(value);
-  state.dietCalendar.selectedDate = state.dietCalendar.startDate;
+  setVisiblePlanDate(state.dietCalendar.startDate);
   renderPlanCalendarControls();
   reloadDietPlansAfterCalendarChange();
 }
 
 async function handlePlanDateSelection(planDate) {
-  state.dietCalendar.selectedDate = normalizeIsoDate(planDate);
+  const normalizedDate = setVisiblePlanDate(planDate);
   renderPlanCalendarControls();
   if (!state.formData?.age) return;
-  await loadOrGenerateDietPlanForDate(state.dietCalendar.selectedDate, { reason: "select" });
+
+  const stored = await resolveStoredDietPlanSnapshot(normalizedDate, { silent: true, sourceLabel: "" });
+  if (stored?.plans?.length) {
+    applyDietPlanSnapshot(stored);
+  } else if (["queued", "generating"].includes(getPlanGenerationStatus(normalizedDate))) {
+    clearCurrentPlanForPendingDate(normalizedDate);
+  } else {
+    await loadOrGenerateDietPlanForDate(normalizedDate, { reason: "select" });
+  }
+
   renderDietPlans();
-  addSystemLog("diet", `已切换查看 ${formatPlanDateLabel(state.dietCalendar.selectedDate)} 的饮食计划。`);
+  addSystemLog("diet", `已切换查看 ${formatPlanDateLabel(normalizedDate)} 的饮食计划。`);
 }
 
 async function reloadDietPlansAfterCalendarChange() {
@@ -1598,24 +2981,34 @@ async function reloadDietPlansAfterCalendarChange() {
 }
 
 function renderPlanCalendarControls() {
+  ensureEntitledPlanPeriod();
   if (!state.dietCalendar.startDate) {
     state.dietCalendar.startDate = getTodayIsoDate();
   }
   if (!state.dietCalendar.selectedDate) {
-    state.dietCalendar.selectedDate = state.dietCalendar.startDate;
+    setVisiblePlanDate(state.dietCalendar.startDate);
   }
 
   const dates = getPlanDateRange();
-  if (!dates.includes(state.dietCalendar.selectedDate)) {
-    state.dietCalendar.selectedDate = dates[0] || state.dietCalendar.startDate;
+  if (!dates.includes(getVisiblePlanDate())) {
+    setVisiblePlanDate(dates[0] || state.dietCalendar.startDate);
   }
+  const visibleDate = getVisiblePlanDate();
 
   document.querySelectorAll("input[name='planPeriod']").forEach(input => {
+    const locked = !canUsePlanPeriod(input.value);
     input.checked = input.value === state.dietCalendar.period;
+    input.disabled = locked;
+    input.closest("label")?.classList.toggle("entitlement-locked", locked);
+    input.closest("label")?.setAttribute("title", locked ? "Pro 会员解锁该周期" : "");
   });
 
   document.querySelectorAll("[data-plan-period]").forEach(button => {
+    const locked = !canUsePlanPeriod(button.dataset.planPeriod);
     button.classList.toggle("active", button.dataset.planPeriod === state.dietCalendar.period);
+    button.classList.toggle("entitlement-locked", locked);
+    button.disabled = locked;
+    button.title = locked ? "Pro 会员解锁该周期" : "";
   });
 
   const startInput = document.getElementById("planStartDate");
@@ -1627,24 +3020,33 @@ function renderPlanCalendarControls() {
   if (dateSelect) {
     dateSelect.innerHTML = dates.map(date => {
       const snapshot = state.dietCalendar.savedDates[date];
-      const marker = snapshot?.plans?.length ? " · 已保存" : "";
-      return `<option value="${date}" ${date === state.dietCalendar.selectedDate ? "selected" : ""}>${formatPlanDateLabel(date)}${marker}</option>`;
+      const statusInfo = getPlanGenerationEntry(date);
+      const statusText = snapshot?.plans?.length
+        ? "已保存"
+        : getPlanGenerationLabel(statusInfo.status);
+      const marker = statusText ? ` · ${statusText}` : "";
+      return `<option value="${date}" ${date === visibleDate ? "selected" : ""}>${formatPlanDateLabel(date)}${marker}</option>`;
     }).join("");
   }
 
   const status = document.getElementById("planPersistenceStatus");
   if (status) {
-    const snapshot = state.dietCalendar.savedDates[state.dietCalendar.selectedDate];
-    if (state.dietCalendar.loading) {
-      status.innerText = "正在读取或生成日期计划...";
-    } else if (!snapshot?.plans?.length) {
-      status.innerText = `${formatPlanDateLabel(state.dietCalendar.selectedDate)} 尚未生成`;
-    } else if (snapshot.dbSaved) {
+    const snapshot = state.dietCalendar.savedDates[visibleDate];
+    const statusInfo = getPlanGenerationEntry(visibleDate);
+    if (snapshot?.plans?.length && snapshot.dbSaved) {
       status.innerText = `数据库已保存 · ${formatPlanDateLabel(snapshot.planDate)} · ${formatDateTime(snapshot.updatedAt)}`;
-    } else if (state.auth.user) {
+    } else if (snapshot?.plans?.length && state.auth.user) {
       status.innerText = `本地已生成 · 数据库待同步 · ${formatDateTime(snapshot.updatedAt)}`;
-    } else {
+    } else if (snapshot?.plans?.length) {
       status.innerText = `本地已保存 · 登录后可写入客户数据库 · ${formatDateTime(snapshot.updatedAt)}`;
+    } else if (statusInfo.status === "generating" || state.dietCalendar.loading) {
+      status.innerText = `${formatPlanDateLabel(visibleDate)} 生成中，请稍候...`;
+    } else if (statusInfo.status === "queued") {
+      status.innerText = `${formatPlanDateLabel(visibleDate)} 排队中，后台会自动生成`;
+    } else if (statusInfo.status === "failed") {
+      status.innerText = `${formatPlanDateLabel(visibleDate)} 生成失败：${statusInfo.message || "请重新生成"}`;
+    } else if (!snapshot?.plans?.length) {
+      status.innerText = `${formatPlanDateLabel(visibleDate)} 尚未生成`;
     }
   }
 }
@@ -1682,16 +3084,20 @@ async function handleAuthSubmit(event) {
     state.auth.token = data.token;
     state.auth.user = data.user;
     state.dietCalendar.savedDates = {};
+    state.dietCalendar.generationStatus = {};
+    state.dietCalendar.backgroundQueue = [];
+    state.checkins = {};
+    state.historyMenus = {};
     localStorage.setItem(STORAGE_KEYS.authToken, data.token);
     if (passwordInput) passwordInput.value = "";
     setAuthMessage("");
     renderAuthPanel();
+    await refreshCommerceState({ announce: true });
 
-    if (applyStoredProfileToForm(data.user.profile)) {
-      addSystemLog("data", "已从数据库读取该用户已有画像，并填回问卷。");
-    } else {
-      addSystemLog("data", "账户已登录；当前用户暂无数据库画像，提交问卷后会写入。");
-    }
+    handleAuthenticatedProfile(data.user.profile, {
+      announce: true,
+      loadedMessage: "已从数据库读取该用户已有画像，并填回问卷。"
+    });
   } catch (err) {
     setAuthMessage(err.message || "账户请求失败", "error");
     state.backend.online = false;
@@ -1712,15 +3118,17 @@ async function refreshCurrentUser(options = {}) {
     state.auth.user = data.user;
     if (previousUserId && previousUserId !== data.user.id) {
       state.dietCalendar.savedDates = {};
+      state.dietCalendar.generationStatus = {};
+      state.dietCalendar.backgroundQueue = [];
+      state.checkins = {};
+      state.historyMenus = {};
     }
     renderAuthPanel();
-    if (applyStoredProfileToForm(data.user.profile)) {
-      if (options.announce) {
-        addSystemLog("data", "已加载登录用户，并复用数据库中已有画像。");
-      }
-    } else if (options.announce) {
-      addSystemLog("data", "已加载登录用户；数据库中暂无画像记录。");
-    }
+    await refreshCommerceState();
+    handleAuthenticatedProfile(data.user.profile, {
+      announce: options.announce,
+      loadedMessage: "已加载登录用户，并复用数据库中已有画像。"
+    });
   } catch (err) {
     if (err.status === 401) {
       clearAuthState();
@@ -1736,7 +3144,12 @@ function clearAuthState() {
   state.auth.user = null;
   state.auth.loading = false;
   state.dietCalendar.savedDates = {};
+  state.dietCalendar.generationStatus = {};
+  state.dietCalendar.backgroundQueue = [];
+  state.checkins = {};
+  state.historyMenus = {};
   localStorage.removeItem(STORAGE_KEYS.authToken);
+  resetCommerceState();
   renderAuthPanel();
 }
 
@@ -1753,6 +3166,232 @@ async function syncStoredProfileFromDb() {
 
 function getCurrentProfileRecordKey() {
   return state.auth.user ? `profile.user.${state.auth.user.id}` : "profile.current";
+}
+
+function getBodyMetricsRecordKey() {
+  const owner = state.auth.user?.id || "local";
+  return `body.metrics.${owner}`;
+}
+
+function readBodyMetricRecords() {
+  const record = readDataRecord(getBodyMetricsRecordKey());
+  const items = Array.isArray(record?.value) ? record.value : [];
+  return items
+    .filter(item => item && typeof item === "object")
+    .map(item => ({
+      date: normalizeIsoDate(item.date),
+      weight: Number(item.weight) || 0,
+      height: Number(item.height) || 0,
+      bmi: Number(item.bmi) || 0,
+      status: item.status || "",
+      recordedAt: item.recordedAt || ""
+    }))
+    .filter(item => item.weight > 0 && item.height > 0 && item.bmi > 0)
+    .sort((a, b) => a.date.localeCompare(b.date));
+}
+
+function saveBodyMetricRecords(records) {
+  const cleaned = records
+    .filter(item => item?.date && item.weight > 0 && item.height > 0)
+    .sort((a, b) => a.date.localeCompare(b.date))
+    .slice(-30);
+  saveDataRecord(getBodyMetricsRecordKey(), cleaned);
+  return cleaned;
+}
+
+function getBodyMetricInputIds(source = "form") {
+  return source === "home"
+    ? { date: "homeBodyMetricDate", weight: "homeBodyMetricWeight" }
+    : { date: "bodyMetricDate", weight: "bodyMetricWeight" };
+}
+
+function getBodyMetricHeight() {
+  return Number(document.getElementById("height")?.value || state.formData.height || 0);
+}
+
+function getFallbackBodyMetricWeight() {
+  const records = readBodyMetricRecords();
+  const latest = records[records.length - 1];
+  return Number(latest?.weight || document.getElementById("weight")?.value || state.formData.weight || 0);
+}
+
+function syncBodyMetricInputDefaults(metric = null, options = {}) {
+  const fallbackMetric = metric || readBodyMetricRecords().slice(-1)[0] || collectBodyMetricFromForm();
+  const fallbackDate = fallbackMetric?.date || getTodayIsoDate();
+  const fallbackWeight = Number(fallbackMetric?.weight || getFallbackBodyMetricWeight() || 0);
+
+  ["form", "home"].forEach(source => {
+    const ids = getBodyMetricInputIds(source);
+    const dateInput = document.getElementById(ids.date);
+    const weightInput = document.getElementById(ids.weight);
+
+    if (dateInput) {
+      dateInput.max = getTodayIsoDate();
+      if (options.force || (!dateInput.value && document.activeElement !== dateInput)) {
+        dateInput.value = fallbackDate;
+      }
+    }
+    if (weightInput && fallbackWeight > 0 && (options.force || (!weightInput.value && document.activeElement !== weightInput))) {
+      weightInput.value = fallbackWeight.toFixed(1).replace(/\.0$/, "");
+    }
+  });
+}
+
+function collectBodyMetricFromForm() {
+  const height = getBodyMetricHeight();
+  const weight = Number(document.getElementById("weight")?.value || state.formData.weight || 0);
+  if (!height || !weight) return null;
+  const bmi = weight / Math.pow(height / 100, 2);
+  return {
+    date: getTodayIsoDate(),
+    weight,
+    height,
+    bmi: Number(bmi.toFixed(1)),
+    status: getBmiStatus(bmi),
+    recordedAt: new Date().toISOString()
+  };
+}
+
+function collectBodyMetricFromInput(source = "form", options = {}) {
+  const ids = getBodyMetricInputIds(source);
+  const dateInput = document.getElementById(ids.date);
+  const weightInput = document.getElementById(ids.weight);
+  const date = normalizeIsoDate(dateInput?.value || getTodayIsoDate());
+  const weight = Number(weightInput?.value || 0);
+  const height = getBodyMetricHeight();
+
+  if (!parseIsoDate(dateInput?.value || date)) {
+    if (!options.silent) addSystemLog("data", "体重记录日期格式无效，请重新选择日期。");
+    return null;
+  }
+  if (date > getTodayIsoDate()) {
+    if (!options.silent) addSystemLog("data", "体重记录日期不能晚于今天。");
+    return null;
+  }
+  if (!weight || weight < 20 || weight > 250) {
+    if (!options.silent) addSystemLog("data", "请输入 20-250kg 之间的体重数值。");
+    return null;
+  }
+  if (!height) {
+    if (!options.silent) addSystemLog("data", "请先填写身高，系统需要身高计算 BMI。");
+    return null;
+  }
+
+  const bmi = weight / Math.pow(height / 100, 2);
+  return {
+    date,
+    weight: Number(weight.toFixed(1)),
+    height,
+    bmi: Number(bmi.toFixed(1)),
+    status: getBmiStatus(bmi),
+    recordedAt: new Date().toISOString()
+  };
+}
+
+function saveBodyMetricFromCurrentForm(options = {}) {
+  const metric = collectBodyMetricFromInput(options.source || "form", options);
+  if (!metric) return null;
+  const records = readBodyMetricRecords();
+  const next = records.filter(item => item.date !== metric.date);
+  next.push(metric);
+  const saved = saveBodyMetricRecords(next);
+  syncBodyMetricInputDefaults(metric, { force: true });
+  renderBodyTrendPanel();
+  if (state.currentStep === 5) {
+    renderCustomerHomeBody();
+  }
+  if (!options.silent) {
+    addSystemLog("data", `已记录 ${formatPlanDateLabel(metric.date)} 体重 ${metric.weight}kg，BMI ${metric.bmi}。`);
+  }
+  return saved;
+}
+
+function renderBodyTrendPanel() {
+  const summary = document.getElementById("bodyTrendSummary");
+  const chart = document.getElementById("bodyTrendChart");
+  const list = document.getElementById("bodyTrendList");
+  if (!summary && !chart && !list) return;
+
+  syncBodyMetricInputDefaults();
+  const current = collectBodyMetricFromInput("form", { silent: true }) || collectBodyMetricFromForm();
+  const records = readBodyMetricRecords();
+  const latestRecords = records.slice(-8);
+  const previous = records.length >= 2 ? records[records.length - 2] : null;
+  const latest = records[records.length - 1] || null;
+  const trendText = latest && previous
+    ? `较上次 ${latest.weight - previous.weight >= 0 ? "+" : ""}${(latest.weight - previous.weight).toFixed(1)}kg`
+    : latest
+      ? `最近记录 ${latest.weight}kg`
+      : "暂无记录";
+
+  if (summary) {
+    summary.innerHTML = "";
+    const bmiItem = document.createElement("span");
+    bmiItem.textContent = current
+      ? `当前 BMI：${current.bmi}（${current.status}）`
+      : "当前 BMI：--";
+    const trendItem = document.createElement("span");
+    trendItem.textContent = `趋势：${trendText}`;
+    summary.appendChild(bmiItem);
+    summary.appendChild(trendItem);
+  }
+
+  if (chart) {
+    chart.innerHTML = "";
+    if (latestRecords.length < 2) {
+      const text = document.createElementNS("http://www.w3.org/2000/svg", "text");
+      text.setAttribute("x", "180");
+      text.setAttribute("y", "66");
+      text.setAttribute("text-anchor", "middle");
+      text.setAttribute("class", "body-trend-empty-text");
+      text.textContent = "至少记录 2 次后显示趋势线";
+      chart.appendChild(text);
+    } else {
+      const weights = latestRecords.map(item => item.weight);
+      const min = Math.min(...weights);
+      const max = Math.max(...weights);
+      const span = Math.max(1, max - min);
+      const points = latestRecords.map((item, index) => {
+        const x = 22 + (index * (316 / Math.max(1, latestRecords.length - 1)));
+        const y = 92 - ((item.weight - min) / span * 64);
+        return { x, y, item };
+      });
+
+      const grid = document.createElementNS("http://www.w3.org/2000/svg", "path");
+      grid.setAttribute("d", "M22 28H338M22 60H338M22 92H338");
+      grid.setAttribute("class", "body-trend-grid-line");
+      chart.appendChild(grid);
+
+      const line = document.createElementNS("http://www.w3.org/2000/svg", "polyline");
+      line.setAttribute("points", points.map(point => `${point.x},${point.y}`).join(" "));
+      line.setAttribute("class", "body-trend-line");
+      chart.appendChild(line);
+
+      points.forEach(point => {
+        const dot = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+        dot.setAttribute("cx", String(point.x));
+        dot.setAttribute("cy", String(point.y));
+        dot.setAttribute("r", "4");
+        dot.setAttribute("class", "body-trend-dot");
+        chart.appendChild(dot);
+      });
+    }
+  }
+
+  if (list) {
+    list.innerHTML = "";
+    if (!latestRecords.length) {
+      const empty = document.createElement("span");
+      empty.textContent = "暂无身体数据记录";
+      list.appendChild(empty);
+    } else {
+      latestRecords.slice().reverse().forEach(item => {
+        const chip = document.createElement("span");
+        chip.textContent = `${formatPlanDateShort(item.date)} · ${item.weight}kg · BMI ${item.bmi}`;
+        list.appendChild(chip);
+      });
+    }
+  }
 }
 
 function collectHealthFormData() {
@@ -1961,7 +3600,7 @@ function applyStoredProfileToForm(profile) {
 
   if (profile.planStartDate) {
     state.dietCalendar.startDate = normalizeIsoDate(profile.planStartDate);
-    state.dietCalendar.selectedDate = state.dietCalendar.startDate;
+    setVisiblePlanDate(state.dietCalendar.startDate);
   }
 
   renderPlanCalendarControls();
@@ -1980,6 +3619,7 @@ function applyStoredProfileToForm(profile) {
   state.formData = collectHealthFormData();
   computeEdgeProfile(state.formData);
   saveDataRecord(getCurrentProfileRecordKey(), state.formData);
+  renderBodyTrendPanel();
   return true;
 }
 
@@ -2137,6 +3777,15 @@ function initEventListeners() {
     syncProfileBtn.addEventListener("click", syncStoredProfileFromDb);
   }
 
+  const membershipPlanList = document.getElementById("membershipPlanList");
+  if (membershipPlanList) {
+    membershipPlanList.addEventListener("click", event => {
+      const btn = event.target.closest("[data-membership-plan]");
+      if (!btn) return;
+      checkoutMembershipPlan(btn.dataset.membershipPlan, { channel: "sidebar-membership" });
+    });
+  }
+
   const extraProfileText = document.getElementById("freeProfileText");
   if (extraProfileText) {
     extraProfileText.addEventListener("input", () => {
@@ -2157,6 +3806,32 @@ function initEventListeners() {
     submitBtn.addEventListener("click", handleFormSubmit);
   }
 
+  ["height", "weight"].forEach(id => {
+    const input = document.getElementById(id);
+    if (input) {
+      input.addEventListener("input", renderBodyTrendPanel);
+    }
+  });
+
+  ["bodyMetricDate", "bodyMetricWeight"].forEach(id => {
+    const input = document.getElementById(id);
+    if (input) {
+      input.addEventListener("input", renderBodyTrendPanel);
+    }
+  });
+
+  ["homeBodyMetricDate", "homeBodyMetricWeight"].forEach(id => {
+    const input = document.getElementById(id);
+    if (input) {
+      input.addEventListener("input", renderCustomerHomeBody);
+    }
+  });
+
+  const saveBodyMetricBtn = document.getElementById("saveBodyMetricBtn");
+  if (saveBodyMetricBtn) {
+    saveBodyMetricBtn.addEventListener("click", () => saveBodyMetricFromCurrentForm());
+  }
+
   // 导航按钮（上一步/下一步）
   document.querySelectorAll(".prev-step-btn").forEach(btn => {
     btn.addEventListener("click", () => {
@@ -2175,6 +3850,49 @@ function initEventListeners() {
   const regeneratePlansBtn = document.getElementById("regeneratePlansBtn");
   if (regeneratePlansBtn) {
     regeneratePlansBtn.addEventListener("click", handleRegeneratePlans);
+  }
+
+  const homeCustomizeCurrentBtn = document.getElementById("homeCustomizeCurrentBtn");
+  if (homeCustomizeCurrentBtn) {
+    homeCustomizeCurrentBtn.addEventListener("click", openCurrentPlanForCustomization);
+  }
+
+  const ingredientsBackHomeBtn = document.getElementById("ingredientsBackHomeBtn");
+  if (ingredientsBackHomeBtn) {
+    ingredientsBackHomeBtn.addEventListener("click", goToCustomerHome);
+  }
+
+  const homeViewIngredientsBtn = document.getElementById("homeViewIngredientsBtn");
+  if (homeViewIngredientsBtn) {
+    homeViewIngredientsBtn.addEventListener("click", openHomeIngredients);
+  }
+
+  const homeRecordWeightBtn = document.getElementById("homeRecordWeightBtn");
+  if (homeRecordWeightBtn) {
+    homeRecordWeightBtn.addEventListener("click", () => {
+      saveBodyMetricFromCurrentForm({ source: "home" });
+      renderCustomerHomeBody();
+    });
+  }
+
+  const homeCompleteCheckinBtn = document.getElementById("homeCompleteCheckinBtn");
+  if (homeCompleteCheckinBtn) {
+    homeCompleteCheckinBtn.addEventListener("click", () => handleHomeSaveCheckin("completed"));
+  }
+
+  const homeSkipCheckinBtn = document.getElementById("homeSkipCheckinBtn");
+  if (homeSkipCheckinBtn) {
+    homeSkipCheckinBtn.addEventListener("click", () => handleHomeSaveCheckin("skipped"));
+  }
+
+  const homeSaveHistoryMenuBtn = document.getElementById("homeSaveHistoryMenuBtn");
+  if (homeSaveHistoryMenuBtn) {
+    homeSaveHistoryMenuBtn.addEventListener("click", handleHomeSaveHistoryMenu);
+  }
+
+  const homeBackToQuestionnaireBtn = document.getElementById("homeBackToQuestionnaireBtn");
+  if (homeBackToQuestionnaireBtn) {
+    homeBackToQuestionnaireBtn.addEventListener("click", () => goToStep(1));
   }
 
   // 计划分享 Tab 切换
@@ -2251,10 +3969,16 @@ function initEventListeners() {
         period: "day",
         startDate: getTodayIsoDate(),
         selectedDate: getTodayIsoDate(),
+        visibleDate: getTodayIsoDate(),
         savedDates: {},
+        generationStatus: {},
+        backgroundQueueRunning: false,
+        backgroundQueue: [],
         loading: false,
         lastSource: "new"
       };
+      state.checkins = {};
+      state.historyMenus = {};
       document.getElementById("healthForm").reset();
       document.getElementById("ageVal").innerText = "28";
       document.getElementById("heightVal").innerText = "165";
@@ -2319,6 +4043,34 @@ function initEventListeners() {
   const reevaluatePlansBtn = document.getElementById("reevaluatePlansBtn");
   if (reevaluatePlansBtn) {
     reevaluatePlansBtn.addEventListener("click", handleReevaluatePlans);
+  }
+
+  const completeCheckinBtn = document.getElementById("completeCheckinBtn");
+  if (completeCheckinBtn) {
+    completeCheckinBtn.addEventListener("click", () => handleSaveCheckin("completed"));
+  }
+
+  const skipCheckinBtn = document.getElementById("skipCheckinBtn");
+  if (skipCheckinBtn) {
+    skipCheckinBtn.addEventListener("click", () => handleSaveCheckin("skipped"));
+  }
+
+  const saveHistoryMenuBtn = document.getElementById("saveHistoryMenuBtn");
+  if (saveHistoryMenuBtn) {
+    saveHistoryMenuBtn.addEventListener("click", handleSaveHistoryMenu);
+  }
+
+  const refreshRangeShoppingBtn = document.getElementById("refreshRangeShoppingBtn");
+  if (refreshRangeShoppingBtn) {
+    refreshRangeShoppingBtn.addEventListener("click", () => {
+      if (!hasCommerceFeature("rangeShopping")) {
+        promptUpgradeForFeature("周期合并采购清单");
+        renderRangeShoppingPanel();
+        return;
+      }
+      renderRangeShoppingPanel();
+      addSystemLog("ingredient", "已刷新周期合并采购清单。");
+    });
   }
 }
 
@@ -2427,7 +4179,33 @@ function goToStep(step) {
 
 }
 
+function goToCustomerHome(options = {}) {
+  const targetView = document.getElementById("customer-home");
+  if (!targetView) return;
+
+  state.currentStep = 5;
+  document.querySelectorAll(".step-view").forEach(view => {
+    view.classList.remove("active");
+  });
+  targetView.classList.add("active");
+
+  const progressBar = document.getElementById("progressBar");
+  const currentStepName = document.getElementById("current-step-name");
+  if (progressBar) progressBar.style.width = "100%";
+  if (currentStepName) currentStepName.innerText = "客户主页";
+
+  renderCustomerHome();
+  if (!options.silent) {
+    addSystemLog("client", "已进入客户主页，可查看当天饮食计划、打卡面板与体重记录。");
+  }
+}
+
 function goToSharePage() {
+  if (!hasCommerceFeature("shareExport")) {
+    promptUpgradeForFeature("分享报告与推广素材导出");
+    return;
+  }
+
   const shareView = document.getElementById("share-page");
   if (!shareView) return;
 
@@ -2489,18 +4267,16 @@ async function triggerStepTransition(targetStep) {
     if (state.plans.length >= 3) {
       enqueueLog("diet", `已成功为您定制当前日期的3套侧重点不同的健康饮食方案：\n1. ${formatPlanLabelName(state.plans[0], 0)}\n2. ${formatPlanLabelName(state.plans[1], 1)}\n3. ${formatPlanLabelName(state.plans[2], 2)}`);
     }
-    enqueueLog("diet", `周期内 ${getPlanDateRange().length} 天计划已就绪，下一步将对多方案进行量化评估。`);
+    enqueueLog("diet", `当前查看日期计划已就绪；周期内其他日期会在后台继续生成。`);
     saveDataRecord("diet.plans.current", state.plans);
-    
-    setTimeout(() => {
-      goToStep(2);
-      renderDietPlans();
-    }, 2800);
+
+    goToStep(2);
+    renderDietPlans();
 
   } else if (targetStep === 3) {
     processingText.innerText = "正在基于成本、地域和夏季时令进行多维评分...";
 
-    apiSwitch.request("/api/v1/evaluation/score", {
+    const evaluationResponsePromise = apiSwitch.request("/api/v1/evaluation/score", {
       weights: state.weights,
       plans: state.plans.map(plan => ({ name: plan.name, scores: plan.scores })),
       agentContext: state.formData.extraProfile,
@@ -2516,13 +4292,22 @@ async function triggerStepTransition(targetStep) {
     enqueueLog("eval", "正在使用归一化加权公式实时计算 3 个方案的最终健康推荐评分。");
     enqueueLog("switch", "正在从可执行性、营养结构和量化约束三个角度进行独立复核。");
 
-    setTimeout(() => {
-      goToStep(3);
-      evaluatePlansRealtime();
-      runAiDebateForPlans();
-      enqueueLog("eval", `打分已就绪！当前判定综合得分最高的是：【${state.plans[state.selectedPlanIndex].name}】。`);
-      enqueueLog("eval", "用户可手动调节权重滑块重新评估。确定最终方案后，将为该方案生成采购清单。");
-    }, 2500);
+    try {
+      await evaluationResponsePromise;
+    } catch (err) {
+      enqueueLog("eval", `评分服务暂不可用，继续使用本地权重评估：${err.message || "未知错误"}`);
+    }
+
+    await wait(2500);
+    goToStep(3);
+    evaluatePlansRealtime();
+    try {
+      await runAiDebateForPlans();
+    } catch (err) {
+      enqueueLog("eval", `智能复核暂不可用，已保留本地评分结果：${err.message || "未知错误"}`);
+    }
+    enqueueLog("eval", `打分已就绪！当前判定综合得分最高的是：【${state.plans[state.selectedPlanIndex].name}】。`);
+    enqueueLog("eval", "用户可手动调节权重滑块重新评估。确定最终方案后，将为该方案生成采购清单。");
 
   } else if (targetStep === 4) {
     processingText.innerText = "正在基于最终推荐方案生成食材采购清单...";
@@ -2580,10 +4365,9 @@ async function triggerStepTransition(targetStep) {
       ingredients: plan.ingredients
     })));
 
-    setTimeout(() => {
-      goToStep(4);
-      renderIngredients();
-    }, 2400);
+    await wait(2400);
+    goToStep(4);
+    renderIngredients();
   }
 }
 
@@ -2597,10 +4381,17 @@ async function handleFormSubmit() {
 
   state.formData = collectHealthFormData();
   renderAdditionalProfilePreview(state.formData.extraProfile);
+  saveBodyMetricFromCurrentForm({ silent: true });
   state.planConstraints = createEmptyPlanConstraints();
   state.planDiscussion = createEmptyPlanDiscussion();
   state.dietCalendar.savedDates = {};
+  state.dietCalendar.generationStatus = {};
+  state.dietCalendar.backgroundQueue = [];
+  state.dietCalendar.backgroundQueueRunning = false;
+  state.dietCalendar.visibleDate = state.dietCalendar.selectedDate;
   state.dietCalendar.lastSource = "new";
+  state.checkins = {};
+  state.historyMenus = {};
 
   computeEdgeProfile(state.formData);
   saveDataRecord(getCurrentProfileRecordKey(), state.formData);
@@ -2633,8 +4424,8 @@ async function handleFormSubmit() {
     enqueueLog("client", `客户经理 Agent 暂不可用，继续使用本地画像：${err.message || "未知错误"}`);
   }
 
-  // 开启流转动画，进入膳食方案生成
-  triggerStepTransition(2);
+  // 开启流转动画，进入膳食方案页；后续步骤由用户点击下一步推进。
+  await triggerStepTransition(2);
 }
 
 // 计算代谢消耗并产生模拟的饮食方案数据 (与用户输入深度动态关联)
@@ -3664,6 +5455,11 @@ function renderDietPlans() {
   const container = document.getElementById("plansSelectorTabs");
   if (!container) return;
   container.innerHTML = "";
+
+  if (!state.plans.length) {
+    renderPendingDietPlanState();
+    return;
+  }
   
   state.plans.forEach((plan, idx) => {
     const tab = document.createElement("div");
@@ -3687,6 +5483,53 @@ function renderDietPlans() {
   });
 
   showPlanDetails(state.activePlanIndex);
+}
+
+function renderPendingDietPlanState() {
+  const visibleDate = getVisiblePlanDate();
+  const statusInfo = getPlanGenerationEntry(visibleDate);
+  const statusLabel = getPlanGenerationLabel(statusInfo.status) || (state.dietCalendar.loading ? "生成中" : "尚未生成");
+  const messageMap = {
+    queued: "该日期已进入后台队列，生成完成后会自动显示。",
+    generating: "该日期正在生成，当前页面会在完成后自动刷新。",
+    failed: statusInfo.message || "该日期生成失败，请点击重新生成当天。",
+    saved: "该日期计划已保存，正在读取详情。"
+  };
+  const message = messageMap[statusInfo.status] || "该日期还没有可展示的饮食方案。";
+
+  const tabs = document.getElementById("plansSelectorTabs");
+  const mealsContainer = document.getElementById("mealsListContainer");
+  const totalKcal = document.getElementById("totalKcalVal");
+  const chartSvg = document.getElementById("macroPieChart");
+  const legend = document.getElementById("macroLegend");
+
+  if (tabs) {
+    tabs.innerHTML = `
+      <div class="plan-tab plan-tab-placeholder">
+        <div class="plan-tab-title">${formatPlanDateLabel(visibleDate)} · ${statusLabel}</div>
+        <div class="plan-tab-sub">${message}</div>
+      </div>
+    `;
+  }
+
+  if (mealsContainer) {
+    mealsContainer.innerHTML = `
+      <div class="plan-pending-card">
+        <strong>${formatPlanDateLabel(visibleDate)} ${statusLabel}</strong>
+        <span>${message}</span>
+      </div>
+    `;
+  }
+
+  if (totalKcal) totalKcal.innerText = "--";
+  if (chartSvg) {
+    chartSvg.innerHTML = `<circle cx="50" cy="50" r="40" fill="transparent" stroke="#1f2937" stroke-width="12"></circle>`;
+  }
+  if (legend) {
+    legend.innerHTML = `
+      <div class="macro-empty">等待当前日期计划生成后展示营养结构</div>
+    `;
+  }
 }
 
 function renderPlanAgentPanel() {
@@ -3832,6 +5675,43 @@ function markDishDeleted(planIndex, mealIndex, dishIndex) {
   showPlanDetails(planIndex);
 }
 
+async function replaceDishOnce(planIndex, mealIndex, dishIndex) {
+  const plan = state.plans[planIndex];
+  const meal = plan?.meals?.[mealIndex];
+  const dishes = splitMealDishes(meal?.food);
+  const dish = dishes[dishIndex];
+  if (!plan || !meal || !dish) return;
+  if (isDishPinned(planIndex, meal.name, dishIndex)) {
+    addSystemLog("diet", "该菜品已固定，取消固定后才能一键替换。");
+    return;
+  }
+
+  state.planConstraints.revision += 1;
+  const replacement = selectReplacementDish(planIndex, mealIndex, dishIndex, meal.name, dish);
+  dishes[dishIndex] = replacement;
+  plan.meals[mealIndex] = {
+    ...meal,
+    food: joinMealDishes(dishes),
+    replacedByAgent: true,
+    oneClickReplacedAt: new Date().toISOString()
+  };
+  plan.ingredients = buildIngredientsFromMeals(plan, state.formData);
+  plan.agentScore = calculatePlanAgentScore(plan, planIndex);
+  plan.agentNotes = `已一键替换「${dish}」为「${replacement}」`;
+  state.planDiscussion = buildPlanGenerationDiscussion({ reason: "one-click-replace" });
+
+  const planDate = getVisiblePlanDate();
+  const snapshot = createDietPlanSnapshot(planDate, "local");
+  await persistDietPlanSnapshot(snapshot, { silent: true });
+  saveDataRecord("diet.plans.current", state.plans);
+  renderPlanAgentPanel();
+  showPlanDetails(planIndex);
+  renderPlanCalendarControls();
+  if (state.currentStep === 3) evaluatePlansRealtime();
+  if (state.currentStep === 4) renderIngredients();
+  addSystemLog("diet", `${formatPlanDateLabel(planDate)} 已替换菜品：${dish} → ${replacement}。`);
+}
+
 function removePlanConstraint(type, id) {
   if (type === "fixed") {
     state.planConstraints.pinnedDishes = state.planConstraints.pinnedDishes.filter(item => item.id !== id);
@@ -3890,7 +5770,10 @@ async function handleRegeneratePlans() {
 // 显示所选方案的三餐与营养配比图表
 function showPlanDetails(idx) {
   const plan = state.plans[idx];
-  if (!plan) return;
+  if (!plan) {
+    renderPendingDietPlanState();
+    return;
+  }
   
   // 1. 三餐渲染
   const mealsContainer = document.getElementById("mealsListContainer");
@@ -3919,6 +5802,7 @@ function showPlanDetails(idx) {
               <div class="dish-row ${pinned ? "pinned" : ""} ${deleted ? "deleted" : ""}">
                 <span class="dish-name">${deleted ? `待替换：${dish}` : dish}</span>
                 <span class="dish-actions">
+                  <button type="button" class="meal-tool replace" data-action="replace" data-dish-index="${dishIndex}" ${pinned || deleted ? "disabled" : ""}>换一个</button>
                   <button type="button" class="meal-tool ${pinned ? "active" : ""}" data-action="pin" data-dish-index="${dishIndex}" ${deleted ? "disabled" : ""}>${pinned ? "已固定" : "固定"}</button>
                   <button type="button" class="meal-tool delete" data-action="delete" data-dish-index="${dishIndex}" ${pinned || deleted ? "disabled" : ""}>删除</button>
                 </span>
@@ -3931,6 +5815,12 @@ function showPlanDetails(idx) {
     `;
     card.querySelectorAll("[data-action='pin']").forEach(button => {
       button.addEventListener("click", () => togglePinnedDish(idx, mealIndex, parseInt(button.dataset.dishIndex)));
+    });
+    card.querySelectorAll("[data-action='replace']").forEach(button => {
+      button.addEventListener("click", () => {
+        replaceDishOnce(idx, mealIndex, parseInt(button.dataset.dishIndex))
+          .catch(err => addSystemLog("diet", `一键替换失败：${err.message || "未知错误"}`));
+      });
     });
     card.querySelectorAll("[data-action='delete']").forEach(button => {
       button.addEventListener("click", () => markDishDeleted(idx, mealIndex, parseInt(button.dataset.dishIndex)));
@@ -3995,11 +5885,275 @@ function showPlanDetails(idx) {
   `;
 }
 
+function renderCheckinPanel() {
+  const card = document.getElementById("checkinStatusCard");
+  const noteInput = document.getElementById("checkinNote");
+  const completeBtn = document.getElementById("completeCheckinBtn");
+  const skipBtn = document.getElementById("skipCheckinBtn");
+  const saveMenuBtn = document.getElementById("saveHistoryMenuBtn");
+  const satietyInput = document.getElementById("checkinSatiety");
+  const difficultyInput = document.getElementById("checkinDifficulty");
+  const ateOutInput = document.getElementById("checkinAteOut");
+  if (!card && !noteInput && !completeBtn && !skipBtn && !saveMenuBtn && !satietyInput && !difficultyInput && !ateOutInput) return;
+
+  const planDate = getVisiblePlanDate();
+  const activePlan = state.plans[state.activePlanIndex] || state.plans[state.selectedPlanIndex];
+  const checkin = state.checkins[planDate] || readLocalDietCheckin(planDate);
+  const historyMenu = state.historyMenus[planDate] || readLocalHistoryMenu(planDate);
+  if (checkin) state.checkins[planDate] = checkin;
+  if (historyMenu) state.historyMenus[planDate] = historyMenu;
+
+  const allowed = isCheckinDateAllowed(planDate);
+  const hasMenu = Boolean(activePlan);
+  const disabled = !allowed || !hasMenu;
+  const activePlanIndex = state.plans.indexOf(activePlan);
+  const planName = activePlan ? formatPlanLabelName(activePlan, activePlanIndex >= 0 ? activePlanIndex : 0) : "等待计划生成";
+
+  if (card) {
+    const checkinText = checkin
+      ? `${getCheckinStatusLabel(checkin.status)} · ${formatDateTime(checkin.checkedAt || checkin.updatedAt)}`
+      : "未打卡";
+    const menuText = historyMenu
+      ? `${historyMenu.dbSaved ? "数据库已保存" : "本地已保存"} · ${formatDateTime(historyMenu.updatedAt)}`
+      : "未保存";
+    const feedbackText = checkin
+      ? getCheckinFeedbackLabel(checkin.feedback)
+      : "未记录";
+    const restrictionText = allowed
+      ? "可保存今日及历史日期的客户打卡与菜单。"
+      : "未来日期仅展示计划，不允许写入打卡或历史菜单。";
+    card.innerHTML = `
+      <div class="checkin-status-row">
+        <span>打卡日期</span>
+        <strong>${formatPlanDateLabel(planDate)}</strong>
+      </div>
+      <div class="checkin-status-row">
+        <span>客户菜单</span>
+        <strong>${planName}</strong>
+      </div>
+      <div class="checkin-status-row">
+        <span>打卡状态</span>
+        <strong>${checkinText}</strong>
+      </div>
+      <div class="checkin-status-row">
+        <span>历史菜单</span>
+        <strong>${menuText}</strong>
+      </div>
+      <div class="checkin-status-row">
+        <span>执行反馈</span>
+        <strong>${feedbackText}</strong>
+      </div>
+      <div class="checkin-plan-note">${restrictionText}</div>
+    `;
+  }
+
+  if (noteInput) {
+    if (document.activeElement !== noteInput) {
+      noteInput.value = checkin?.note || "";
+    }
+    noteInput.disabled = disabled;
+  }
+
+  if (satietyInput) {
+    satietyInput.value = checkin?.feedback?.satiety || "just-right";
+    satietyInput.disabled = disabled;
+  }
+  if (difficultyInput) {
+    difficultyInput.value = checkin?.feedback?.difficulty || "easy";
+    difficultyInput.disabled = disabled;
+  }
+  if (ateOutInput) {
+    ateOutInput.checked = Boolean(checkin?.feedback?.ateOut);
+    ateOutInput.disabled = disabled;
+  }
+
+  [completeBtn, skipBtn, saveMenuBtn].forEach(button => {
+    if (button) button.disabled = disabled;
+  });
+
+  if (state.currentStep === 5) {
+    renderCustomerHomeCheckin();
+  }
+}
+
+function getRangeShoppingCategoryLabels() {
+  return {
+    meat: "肉蛋奶/蛋白",
+    veggies: "蔬果",
+    grains: "主食谷物",
+    seasonings: "油脂调味"
+  };
+}
+
+function getPlanForRangeShopping(date) {
+  const normalizedDate = normalizeIsoDate(date);
+  let snapshot = state.dietCalendar.savedDates[normalizedDate] || readLocalDietPlanSnapshot(normalizedDate);
+  if (normalizedDate === getVisiblePlanDate() && state.plans.length) {
+    snapshot = createDietPlanSnapshot(normalizedDate, "current");
+  }
+  if (!snapshot?.plans?.length) return null;
+  const selectedIndex = Math.min(state.selectedPlanIndex || 0, snapshot.plans.length - 1);
+  const plan = snapshot.plans[selectedIndex] || snapshot.plans[0];
+  if (!plan) return null;
+  const ingredients = hasUsableIngredients(plan.ingredients)
+    ? normalizePlanIngredients(plan.ingredients)
+    : buildIngredientsFromMeals(plan, snapshot.profile || state.formData);
+  return {
+    date: normalizedDate,
+    planName: formatPlanLabelName(plan, selectedIndex),
+    ingredients
+  };
+}
+
+function buildRangeShoppingList() {
+  const dates = getPlanDateRange();
+  const categoryLabels = getRangeShoppingCategoryLabels();
+  const categories = Object.keys(categoryLabels).reduce((acc, key) => {
+    acc[key] = new Map();
+    return acc;
+  }, {});
+  const usedDates = [];
+
+  dates.forEach(date => {
+    const item = getPlanForRangeShopping(date);
+    if (!item) return;
+    usedDates.push(item.date);
+    Object.keys(categoryLabels).forEach(category => {
+      (item.ingredients[category] || []).forEach(ingredient => {
+        const name = String(ingredient.name || "食材").trim();
+        if (!name) return;
+        const key = normalizeDishText(name);
+        const existing = categories[category].get(key) || {
+          name,
+          quantities: [],
+          dates: new Set()
+        };
+        existing.quantities.push(String(ingredient.qty || "适量"));
+        existing.dates.add(item.date);
+        categories[category].set(key, existing);
+      });
+    });
+  });
+
+  const output = Object.keys(categoryLabels).reduce((acc, category) => {
+    acc[category] = Array.from(categories[category].values()).map(item => {
+      const uniqueQty = Array.from(new Set(item.quantities.filter(Boolean)));
+      const repeatedQty = uniqueQty.length === 1
+        ? `${uniqueQty[0]} × ${item.dates.size}天`
+        : uniqueQty.join(" / ");
+      return {
+        name: item.name,
+        qty: repeatedQty || "按天适量",
+        dayCount: item.dates.size,
+        dates: Array.from(item.dates).sort()
+      };
+    }).sort((a, b) => b.dayCount - a.dayCount || a.name.localeCompare(b.name));
+    return acc;
+  }, {});
+
+  return {
+    dates,
+    usedDates,
+    missingCount: Math.max(0, dates.length - usedDates.length),
+    categories: output
+  };
+}
+
+function renderRangeShoppingPanel() {
+  const grid = document.getElementById("rangeShoppingGrid");
+  const status = document.getElementById("rangeShoppingStatus");
+  if (!grid && !status) return;
+
+  if (!hasCommerceFeature("rangeShopping")) {
+    if (status) {
+      status.textContent = "Pro 会员解锁一周/一个月合并采购清单。";
+    }
+    if (grid) {
+      grid.innerHTML = "";
+      const locked = document.createElement("div");
+      locked.className = "range-shopping-empty";
+      locked.textContent = "当前为免费版，仅展示单日采购清单。开通 Pro 后可合并周期食材并用于套餐采购。";
+      grid.appendChild(locked);
+    }
+    return;
+  }
+
+  const data = buildRangeShoppingList();
+  const categoryLabels = getRangeShoppingCategoryLabels();
+  if (status) {
+    status.textContent = `已合并 ${data.usedDates.length}/${data.dates.length} 天；${data.missingCount ? `还有 ${data.missingCount} 天等待生成` : "周期内日期已全部纳入"}`;
+  }
+  if (!grid) return;
+  grid.innerHTML = "";
+
+  const hasAny = Object.values(data.categories).some(items => items.length > 0);
+  if (!hasAny) {
+    const empty = document.createElement("div");
+    empty.className = "range-shopping-empty";
+    empty.textContent = "等待周期计划生成后展示合并清单";
+    grid.appendChild(empty);
+    return;
+  }
+
+  Object.entries(categoryLabels).forEach(([category, label]) => {
+    const items = data.categories[category] || [];
+    const card = document.createElement("article");
+    card.className = "range-shopping-card";
+    const title = document.createElement("h4");
+    title.textContent = label;
+    card.appendChild(title);
+
+    if (!items.length) {
+      const empty = document.createElement("p");
+      empty.className = "range-shopping-card-empty";
+      empty.textContent = "暂无该类食材";
+      card.appendChild(empty);
+    } else {
+      items.slice(0, 8).forEach(item => {
+        const row = document.createElement("div");
+        row.className = "range-shopping-row";
+        const name = document.createElement("span");
+        name.textContent = item.name;
+        const qty = document.createElement("strong");
+        qty.textContent = item.qty;
+        const dates = document.createElement("small");
+        dates.textContent = item.dates.map(formatPlanDateShort).join("、");
+        row.appendChild(name);
+        row.appendChild(qty);
+        row.appendChild(dates);
+        card.appendChild(row);
+      });
+    }
+    grid.appendChild(card);
+  });
+
+  saveDataRecord("ingredients.rangeShopping.current", data);
+}
+
 // 步骤 4：渲染食材清单 (带勾选和折叠交互)
 function renderIngredients() {
   const activePlan = state.plans[state.activePlanIndex];
   const container = document.getElementById("ingredientsAccordion");
-  if (!activePlan || !container) return;
+  if (!container) {
+    renderCheckinPanel();
+    return;
+  }
+
+  if (!activePlan) {
+    container.innerHTML = `
+      <div class="plan-pending-card">
+        <strong>${formatPlanDateLabel(getVisiblePlanDate())} 暂无可用食材清单</strong>
+        <span>等待当前日期饮食方案生成后再展示采购清单和客户打卡计划。</span>
+      </div>
+    `;
+    const tipText = document.getElementById("ingredientTipText");
+    if (tipText) {
+      tipText.innerText = `${formatPlanDateLabel(getVisiblePlanDate())} 计划尚未生成，暂不能保存打卡或历史菜单。`;
+    }
+    renderRangeShoppingPanel();
+    renderCheckinPanel();
+    return;
+  }
 
   container.innerHTML = "";
 
@@ -4070,6 +6224,10 @@ function renderIngredients() {
     catGroup.appendChild(content);
     container.appendChild(catGroup);
   });
+
+  renderCheckinPanel();
+  renderRangeShoppingPanel();
+  void persistHistoryMenuForSelectedDate({ silent: true });
 }
 
 function clampScore(value) {
@@ -4687,6 +6845,11 @@ let animId = null;
 
 // 启动计划打卡视频录制生成流程
 function startVideoRecording() {
+  if (!hasCommerceFeature("shareExport")) {
+    promptUpgradeForFeature("计划打卡视频生成");
+    return;
+  }
+
   const btn = document.getElementById("generateVideoBtn");
   const progressContainer = document.getElementById("videoProgressContainer");
   const progressBar = document.getElementById("videoProgressBar");
@@ -4888,6 +7051,11 @@ function drawRoundRect(ctx, x, y, width, height, radius) {
 
 // 生成并下载个人平台分享助手所需的 share_data.json
 function downloadPublishPackage() {
+  if (!hasCommerceFeature("shareExport")) {
+    promptUpgradeForFeature("分享数据包导出");
+    return;
+  }
+
   const activePlan = state.plans[state.selectedPlanIndex];
   if (!activePlan) {
     addSystemLog("market", "未找到最终方案，无法导出分享数据包。");

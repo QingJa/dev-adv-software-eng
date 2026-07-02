@@ -4,7 +4,10 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>个性化健康饮食规划系统</title>
-  <link rel="stylesheet" href="style.css?v=0.2.5">
+  <link rel="manifest" href="manifest.webmanifest">
+  <meta name="theme-color" content="#10B981">
+  <link rel="icon" href="assets/app-icon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="style.css?v=0.2.6">
 </head>
 <body>
 
@@ -63,6 +66,29 @@
           </div>
         </div>
       </section>
+
+      <section class="commerce-panel" aria-label="会员套餐与权益">
+        <div class="commerce-header">
+          <div>
+            <h2>会员套餐</h2>
+            <span id="membershipStatus">免费版 · 单日计划</span>
+          </div>
+        </div>
+        <div class="commerce-benefits" id="membershipBenefits">
+          <span>单日基础方案</span>
+          <span>本地计划记录</span>
+        </div>
+        <div class="commerce-plan-list" id="membershipPlanList"></div>
+        <div class="commerce-message" id="membershipMessage" aria-live="polite"></div>
+      </section>
+
+      <section class="launch-sidebar-card" aria-label="APP 上线状态">
+        <div>
+          <h2>APP 上线</h2>
+          <span id="sidebarAppStatus">PWA 待检测 · 端侧模型待命</span>
+        </div>
+        <button type="button" id="openLaunchPageBtn">打开包装网页</button>
+      </section>
     </aside>
     
     <!-- 主工作区 -->
@@ -70,15 +96,15 @@
       <!-- 进度指示器 -->
       <div class="progress-header">
         <div class="steps-indicator">
-          当前环节：<span id="current-step-name" class="active-step-num">基础健康问卷</span>
+          当前环节：<span id="current-step-name" class="active-step-num">客户主页</span>
         </div>
         <div class="progress-bar-container">
-          <div class="progress-bar-fill" id="progressBar"></div>
+          <div class="progress-bar-fill" id="progressBar" style="width: 100%;"></div>
         </div>
       </div>
       
       <!-- 步骤 1：基础健康问卷 -->
-      <section class="step-view active" id="step-1">
+      <section class="step-view" id="step-1">
         <div class="glass-panel">
           <div class="panel-header">
             <h2 class="panel-title">基础健康问卷</h2>
@@ -246,9 +272,37 @@
                 <div class="profile-extract-empty">暂无补充信息</div>
               </div>
             </section>
+
+            <section class="body-trend-panel" aria-label="身体数据趋势">
+              <div class="body-trend-header">
+                <div>
+                  <h3>身体数据趋势</h3>
+                  <span>记录体重与 BMI，用于后续计划复盘</span>
+                </div>
+                <button type="button" class="body-trend-save" id="saveBodyMetricBtn">保存体重记录</button>
+              </div>
+              <div class="body-record-form" aria-label="体重记录输入">
+                <label for="bodyMetricDate">
+                  <span>记录日期</span>
+                  <input type="date" id="bodyMetricDate">
+                </label>
+                <label for="bodyMetricWeight">
+                  <span>体重 kg</span>
+                  <input type="number" id="bodyMetricWeight" min="20" max="250" step="0.1" inputmode="decimal" placeholder="输入体重">
+                </label>
+              </div>
+              <div class="body-trend-summary" id="bodyTrendSummary">
+                <span>当前 BMI：--</span>
+                <span>趋势：暂无记录</span>
+              </div>
+              <svg class="body-trend-chart" id="bodyTrendChart" viewBox="0 0 360 120" role="img" aria-label="体重趋势图"></svg>
+              <div class="body-trend-list" id="bodyTrendList">
+                <span>暂无身体数据记录</span>
+              </div>
+            </section>
             
             <button type="button" class="action-btn" id="submitFormBtn">
-              <span>生成用户画像并流转</span> ➔
+              <span>生成用户画像并进入方案</span> ➔
             </button>
           </form>
         </div>
@@ -265,13 +319,142 @@
           </div>
         </div>
       </section>
+
+      <!-- 客户主页：计划生成后的日常工作台 -->
+      <section class="step-view active" id="customer-home">
+        <div class="glass-panel customer-home-panel">
+          <div class="panel-header customer-home-header">
+            <div>
+              <h2 class="panel-title">客户主页</h2>
+              <span id="homeStatusText">今日饮食计划、打卡与体重记录</span>
+            </div>
+            <div class="home-actions">
+              <button type="button" class="nav-btn home-primary-action" id="homeCustomizeCurrentBtn">定制饮食计划</button>
+            </div>
+          </div>
+
+          <div class="home-summary-grid" aria-label="客户当日摘要">
+            <article class="home-summary-card">
+              <span>计划日期</span>
+              <strong id="homeDateLabel">--</strong>
+              <small id="homePeriodLabel">--</small>
+            </article>
+            <article class="home-summary-card">
+              <span>当前方案</span>
+              <strong id="homePlanName">等待生成</strong>
+              <small id="homePlanAngle">--</small>
+            </article>
+            <article class="home-summary-card">
+              <span>热量目标</span>
+              <strong id="homePlanCalories">-- kcal</strong>
+              <small id="homePlanMacros">碳水 -- · 蛋白 -- · 脂肪 --</small>
+            </article>
+            <article class="home-summary-card">
+              <span>打卡状态</span>
+              <strong id="homeCheckinSummary">未打卡</strong>
+              <small id="homeBodySummary">体重暂无记录</small>
+            </article>
+          </div>
+
+          <div class="home-main-grid">
+            <section class="home-plan-card" aria-label="当天饮食计划">
+              <div class="home-section-header">
+                <div>
+                  <h3>当天饮食计划</h3>
+                  <span id="homeMealStatus">--</span>
+                </div>
+                <button type="button" class="checkin-btn" id="homeViewIngredientsBtn">采购清单</button>
+              </div>
+              <div class="home-meals-list" id="homeMealsList">
+                <div class="home-empty-state">等待饮食计划生成</div>
+              </div>
+            </section>
+
+            <section class="home-plan-card home-body-card" aria-label="体重记录">
+              <div class="home-section-header">
+                <div>
+                  <h3>体重记录</h3>
+                  <span id="homeBodyTrendStatus">暂无记录</span>
+                </div>
+                <button type="button" class="body-trend-save" id="homeRecordWeightBtn">保存体重记录</button>
+              </div>
+              <div class="body-record-form home-body-record-form" aria-label="客户主页体重输入">
+                <label for="homeBodyMetricDate">
+                  <span>记录日期</span>
+                  <input type="date" id="homeBodyMetricDate">
+                </label>
+                <label for="homeBodyMetricWeight">
+                  <span>体重 kg</span>
+                  <input type="number" id="homeBodyMetricWeight" min="20" max="250" step="0.1" inputmode="decimal" placeholder="输入体重">
+                </label>
+              </div>
+              <div class="body-trend-summary home-body-summary" id="homeBodySummaryGrid">
+                <span>当前 BMI：--</span>
+                <span>趋势：暂无记录</span>
+              </div>
+              <div class="body-trend-list home-body-list" id="homeBodyRecordList">
+                <span>暂无身体数据记录</span>
+              </div>
+            </section>
+          </div>
+
+          <section class="checkin-section home-checkin-section" aria-label="客户打卡面板">
+            <div class="share-panel-header">
+              <div>
+                <h3>客户打卡面板</h3>
+                <span>今日执行反馈与历史菜单记录</span>
+              </div>
+            </div>
+            <div class="checkin-status-card" id="homeCheckinStatusCard">
+              <div class="checkin-status-row">
+                <span>打卡状态</span>
+                <strong>等待生成菜单</strong>
+              </div>
+            </div>
+            <label class="checkin-note-field" for="homeCheckinNote">
+              <span>客户备注</span>
+              <textarea id="homeCheckinNote" rows="3" placeholder="记录执行情况、替换食材或未完成原因"></textarea>
+            </label>
+            <div class="checkin-feedback-grid">
+              <label for="homeCheckinSatiety">
+                <span>饱腹感</span>
+                <select id="homeCheckinSatiety">
+                  <option value="just-right">刚好</option>
+                  <option value="hungry">偏饿</option>
+                  <option value="too-full">偏撑</option>
+                </select>
+              </label>
+              <label for="homeCheckinDifficulty">
+                <span>执行难度</span>
+                <select id="homeCheckinDifficulty">
+                  <option value="easy">容易执行</option>
+                  <option value="medium">一般</option>
+                  <option value="hard">较难执行</option>
+                </select>
+              </label>
+              <label class="checkin-inline-toggle" for="homeCheckinAteOut">
+                <span>是否外食</span>
+                <input type="checkbox" id="homeCheckinAteOut">
+              </label>
+            </div>
+            <div class="checkin-actions home-checkin-actions">
+              <button type="button" class="checkin-btn primary" id="homeCompleteCheckinBtn">完成打卡</button>
+              <button type="button" class="checkin-btn" id="homeSkipCheckinBtn">标记跳过</button>
+              <button type="button" class="checkin-btn" id="homeSaveHistoryMenuBtn">保存历史菜单</button>
+              <button type="button" class="checkin-btn" id="homeBackToQuestionnaireBtn">重新填写问卷</button>
+            </div>
+          </section>
+        </div>
+      </section>
       
       <!-- 步骤 2：膳食方案 -->
       <section class="step-view" id="step-2">
         <div class="glass-panel">
           <div class="panel-header">
-            <h2 class="panel-title">个性化膳食方案</h2>
-            <span style="font-size: 0.8rem; color: var(--text-muted);">基于用户画像生成 3 套不同侧重点的饮食方案</span>
+            <div>
+              <h2 class="panel-title">个性化膳食方案</h2>
+              <span style="font-size: 0.8rem; color: var(--text-muted);">基于用户画像生成 3 套不同侧重点的饮食方案</span>
+            </div>
           </div>
 
           <div class="profile-summary-grid" id="profileSummary" aria-live="polite">
@@ -436,16 +619,78 @@
               <h2 class="panel-title">分类食材采购清单</h2>
               <span style="font-size: 0.8rem; color: var(--text-muted);">基于最终推荐方案生成肉蛋奶、蔬果、谷物、调味品等采购明细</span>
             </div>
-            <button class="share-toggle-btn" type="button" id="sharePlanBtn">🔗 一键分享计划</button>
+            <div class="home-actions">
+              <button class="checkin-btn" type="button" id="ingredientsBackHomeBtn">返回客户主页</button>
+              <button class="share-toggle-btn" type="button" id="sharePlanBtn">🔗 一键分享计划</button>
+            </div>
           </div>
           
           <div style="margin-bottom: 1rem; font-size: 0.9rem; color: var(--text-secondary);" id="ingredientTipText">
             以下是根据当前方案整理的采购食材明细，支持点击勾选已购买物品：
           </div>
           
-          <div class="ingredients-accordion" id="ingredientsAccordion">
-            <!-- 动态生成食材分类手风琴 -->
-          </div>
+              <div class="ingredients-accordion" id="ingredientsAccordion">
+                <!-- 动态生成食材分类手风琴 -->
+              </div>
+
+              <section class="range-shopping-panel" aria-label="周期合并采购清单">
+                <div class="range-shopping-header">
+                  <div>
+                    <h3>周期合并采购清单</h3>
+                    <span id="rangeShoppingStatus">基于已生成日期自动合并采购食材</span>
+                  </div>
+                  <button type="button" class="checkin-btn" id="refreshRangeShoppingBtn">刷新合并清单</button>
+                </div>
+                <div class="range-shopping-grid" id="rangeShoppingGrid">
+                  <div class="range-shopping-empty">等待周期计划生成后展示合并清单</div>
+                </div>
+              </section>
+
+              <section class="checkin-section" aria-label="客户打卡计划">
+                <div class="share-panel-header">
+                  <div>
+                    <h3>客户打卡计划</h3>
+                <span>仅支持当天及历史日期保存打卡与历史菜单，未来日期只展示规划</span>
+              </div>
+            </div>
+            <div class="checkin-status-card" id="checkinStatusCard">
+              <div class="checkin-status-row">
+                <span>打卡状态</span>
+                <strong>等待生成菜单</strong>
+              </div>
+            </div>
+              <label class="checkin-note-field" for="checkinNote">
+                <span>客户备注</span>
+                <textarea id="checkinNote" rows="3" placeholder="记录执行情况、替换食材或未完成原因"></textarea>
+              </label>
+              <div class="checkin-feedback-grid">
+                <label for="checkinSatiety">
+                  <span>饱腹感</span>
+                  <select id="checkinSatiety">
+                    <option value="just-right">刚好</option>
+                    <option value="hungry">偏饿</option>
+                    <option value="too-full">偏撑</option>
+                  </select>
+                </label>
+                <label for="checkinDifficulty">
+                  <span>执行难度</span>
+                  <select id="checkinDifficulty">
+                    <option value="easy">容易执行</option>
+                    <option value="medium">一般</option>
+                    <option value="hard">较难执行</option>
+                  </select>
+                </label>
+                <label class="checkin-inline-toggle">
+                  <input type="checkbox" id="checkinAteOut">
+                  <span>今天外食较多</span>
+                </label>
+              </div>
+              <div class="checkin-actions">
+                <button type="button" class="checkin-btn primary" id="completeCheckinBtn">完成打卡</button>
+                <button type="button" class="checkin-btn" id="skipCheckinBtn">标记跳过</button>
+                <button type="button" class="checkin-btn" id="saveHistoryMenuBtn">保存历史菜单</button>
+              </div>
+          </section>
           
           <div class="navigation-bar">
             <button class="nav-btn prev-step-btn" data-prev="3">◀ 上一步</button>
@@ -551,6 +796,54 @@
           </section>
         </div>
       </section>
+
+      <!-- 附加页面：APP 上线与商业闭环实现面板 -->
+      <section class="step-view launch-page" id="launch-page">
+        <div class="glass-panel launch-page-panel">
+          <button class="share-back-btn" type="button" id="backFromLaunchBtn">◀ 返回业务流程</button>
+
+          <div class="panel-header launch-page-header">
+            <div>
+              <h2 class="panel-title">APP 上线与商业闭环</h2>
+              <span style="font-size: 0.8rem; color: var(--text-muted);">Web 套壳、PWA 安装、端侧模型、会员转化和商家线索在应用内直接跑通</span>
+            </div>
+          </div>
+
+          <div class="launch-status-grid" id="launchStatusGrid" aria-live="polite">
+            <article class="launch-status-card">
+              <span>APP 壳状态</span>
+              <strong>初始化中</strong>
+            </article>
+          </div>
+
+          <div class="launch-actions-grid">
+            <button type="button" class="launch-action-btn primary" id="installAppBtn">安装为 APP</button>
+            <button type="button" class="launch-action-btn" id="runEdgeModelBtn">运行端侧模型</button>
+            <button type="button" class="launch-action-btn" id="applyEdgePlanBtn">使用端侧方案</button>
+            <button type="button" class="launch-action-btn" id="mockSubscribeBtn">开通 Pro 演示</button>
+            <button type="button" class="launch-action-btn" id="merchantLeadBtn">生成商家线索</button>
+            <button type="button" class="launch-action-btn" id="exportLaunchPackBtn">导出上线数据包</button>
+          </div>
+
+          <div class="launch-runtime-grid">
+            <section class="launch-runtime-panel">
+              <div class="launch-panel-title">
+                <h3>端侧模型输出</h3>
+                <span>离线基础规划、隐私脱敏和低成本推理</span>
+              </div>
+              <div class="launch-output-box" id="edgeModelOutput">尚未运行端侧模型。填写问卷后点击“运行端侧模型”。</div>
+            </section>
+
+            <section class="launch-runtime-panel">
+              <div class="launch-panel-title">
+                <h3>商业闭环状态</h3>
+                <span>获客、转化、留存、变现、复购事件会写入本地和后端 Switch</span>
+              </div>
+              <div class="launch-output-box" id="businessFunnelOutput">暂无商业事件。</div>
+            </section>
+          </div>
+        </div>
+      </section>
       
     </main>
     
@@ -607,6 +900,8 @@
     </div>
   </dialog>
 
-  <script src="app.js?v=0.3.3"></script>
+  <script src="edge-model.js?v=0.1.0"></script>
+  <script src="app.js?v=0.3.9"></script>
+  <script src="launch.js?v=0.1.2"></script>
 </body>
 </html>

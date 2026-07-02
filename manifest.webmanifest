@@ -1,0 +1,45 @@
+{
+  "name": "个性化健康饮食规划系统",
+  "short_name": "饮食规划",
+  "description": "支持端侧模型、离线基础方案和多智能体复核的健康饮食规划 APP。",
+  "start_url": "./index.html?source=pwa",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait-primary",
+  "background_color": "#0b1110",
+  "theme_color": "#10B981",
+  "icons": [
+    {
+      "src": "assets/app-icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ],
+  "shortcuts": [
+    {
+      "name": "生成饮食计划",
+      "short_name": "生成计划",
+      "url": "./index.html?shortcut=plan",
+      "icons": [
+        {
+          "src": "assets/app-icon.svg",
+          "sizes": "any",
+          "type": "image/svg+xml"
+        }
+      ]
+    },
+    {
+      "name": "打开包装网页",
+      "short_name": "包装网页",
+      "url": "./index.html?source=android-webview&appShell=wrapped-web",
+      "icons": [
+        {
+          "src": "assets/app-icon.svg",
+          "sizes": "any",
+          "type": "image/svg+xml"
+        }
+      ]
+    }
+  ]
+}
